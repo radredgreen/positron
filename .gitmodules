@@ -1,0 +1,3 @@
+[submodule "homekitadk"]
+	path = homekitadk
+	url = https://github.com/radredgreen/homekitadk
