@@ -225,7 +225,7 @@ char *get_curr_timestr(char *buf) {
 static int  g_soft_ps_running = 1;
 //TODO: make the IRLED controllable by homekit switch
 static int ir_illumination = 0;		// use IR LEDs when dark
-static int force_color = 0;			// use color mode, even at night
+static int force_color = 1;			// use color mode, even at night
 static int flip_image = 0;			// flip 180deg for ceiling mounts
 
 // credit: https://raw.githubusercontent.com/geekman/t20-rtspd/master/imp-common.c
