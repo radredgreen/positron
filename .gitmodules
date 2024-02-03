@@ -1,3 +1,9 @@
 [submodule "HomeKitADK"]
 	path = HomeKitADK
 	url = https://github.com/radredgreen/HomeKitADK
+[submodule "fdk-aac"]
+	path = fdk-aac
+	url = https://github.com/mstorsjo/fdk-aac.git
+[submodule "opus"]
+	path = opus
+	url = https://github.com/xiph/opus.git
