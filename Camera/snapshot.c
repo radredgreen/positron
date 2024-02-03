@@ -1,13 +1,22 @@
-/**
- * @file streaming.c
- * @author your name (you@domain.com)
- * @brief
- * @version 0.1
- * @date 2021-01-20
+/* 
+ * This file is part of the positron distribution (https://github.com/radredgreen/positron).
+ * Copyright (c) 2024 RadRedGreen.
+ * 
+ * This program is free software: you can redistribute it and/or modify  
+ * it under the terms of the GNU General Public License as published by  
+ * the Free Software Foundation, version 3.
  *
- * @copyright Copyright (c) 2021
+ * This program is distributed in the hope that it will be useful, but 
+ * WITHOUT ANY WARRANTY; without even the implied warranty of 
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU 
+ * General Public License for more details.
  *
+ * You should have received a copy of the GNU General Public License 
+ * along with this program. If not, see <http://www.gnu.org/licenses/>.
  */
+
+
+
 
 #include "snapshot.h"
 #include <stdio.h>
@@ -31,9 +40,9 @@ int getSnapshot(unsigned long * jpegSize, uint8_t* jpegBuf, int width, int heigh
     wait.tv_sec = 0;
     wait.tv_nsec = 100000; //100 ms
 
-	HAPLogInfo(&logObject, "Locking snapshot mutex");
+//	HAPLogInfo(&logObject, "Locking snapshot mutex");
 	if ( pthread_mutex_timedlock(&snapshot_mutex, &wait) != 0 ){
-		HAPLogError(&logObject, "Locking snapshot mutex failed: %s.  Exiting.\n", strerror(errno));
+		HAPLogError(&logObject, "Locking snapshot mutex failed: %s.  Exiting.", strerror(errno));
         *jpegSize = 0;
         return -1;
 	}	
@@ -52,15 +61,15 @@ int getSnapshot(unsigned long * jpegSize, uint8_t* jpegBuf, int width, int heigh
 	fclose(file);  
 	file=NULL;
     
-    HAPLogInfo(&logObject, "Unocking snapshot mutex");
+ //   HAPLogInfo(&logObject, "Unocking snapshot mutex");
 	if ( pthread_mutex_unlock(&snapshot_mutex) != 0 ){
-		HAPLogError(&logObject, "Unlocking snapshot mutex failed: %s.  Exiting.\n", strerror(errno));
+		HAPLogError(&logObject, "Unlocking snapshot mutex failed: %s.  Exiting.", strerror(errno));
         *jpegSize = 0;
         return -1;
 	}	
 
 
-    HAPLogInfo(&logObject, "%lu bytes retrieved\n", (unsigned long) srcsize);
+    HAPLogInfo(&logObject, "%lu bytes retrieved", (unsigned long) srcsize);
 
     tjhandle tjInstanceIn = NULL;
     int flags = 0, snapWidth, snapHeight, snapSubSamp, snapColorspace;
@@ -136,6 +145,6 @@ int getSnapshot(unsigned long * jpegSize, uint8_t* jpegBuf, int width, int heigh
     }
     tjDestroy(tjInstanceIn);
     tjInstanceIn = NULL;
-    HAPLogInfo(&logObject, "Successful %s.\n\n", __func__);
+    HAPLogInfo(&logObject, "Successful %s.", __func__);
     return 0;
 }

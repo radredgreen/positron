@@ -20,7 +20,6 @@ extern "C" {
 #include "HAP.h"
 // #include "streaming.h"
 #include "App_Camera.h"
-#include "Ffmpeg.h"
 #include <pthread.h>
 //#include "capture_and_encoding.h"
 
@@ -46,19 +45,12 @@ typedef struct {
         } operatingMode;
         HAPCharacteristicValue_Active active;
     } state;
-    char ipAddress[32]; // TODO - hardcode for now
     HAPAccessoryServerRef* server;
     HAPPlatformKeyValueStoreRef keyValueStore;
 } AccessoryConfiguration;
 
-static AccessoryConfiguration accessoryConfiguration;
-
 typedef struct {
     streamingSession session;
-    pthread_t streamingThread; // TODO - This probably needs to be an array for multiple streams.
-    pthread_t inStreamThread;
-//    rtsp_context inStreamContext;
-//    srtp_context outStreamContext;
 } AccessoryContext;
 
 /**

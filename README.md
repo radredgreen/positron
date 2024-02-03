@@ -13,6 +13,23 @@ Compilation
 This project is typically built as part of wyrecam.  See
 <https://github.com/radredgreen/wyrecam>
 
+Status
+======
+I'm pushing this because there's a lot working right now.  See <https://github.com/radredgreen/wyrecam>
+
+But the code needs a lot of work. Compiler warnings need to be cleared and the code needs to be thoughly cleaned, linted and refactored.
+
+Notably, return audio (controller->camera) isn't working properly.  See https://github.com/mstorsjo/fdk-aac/issues/164.  I'd prefer to stick with AAC-ELD for the audio as I believe that's required for HKSV, but we could use OPUS for SRTP and AAC for HKSV since there is no audio return channel through HKSV.  
+
+There are quite a few TODOs in the code that need to be resolved.  The two that bother me the most are that SELECT in the audio/video return thread that caused runaway cpu usage in the HomeKitADK library and stream reconfiguration doesn't work because the TLV parser can't take a partial TLV (see the code for an example).
+
+Please let me know if you can help with any of this!  Next directions are to either press on to HKSV (https://github.com/Supereg/secure-video-specification), fix these shortcomings or refactor.
+
+Night time color is forced on, the image is not flipped (although all my testing has been flipped for ceiling mounts), and the IR LEDs are disabled by hard coded variables.  Need to decide a configuration method (probably a file, or the HK key-value-store) in the future.
+
+
+See further status at <https://github.com/radredgreen/wyrecam>
+
 License
 ========
 

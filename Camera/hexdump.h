@@ -17,41 +17,21 @@
 
 
 
-
-#ifndef SNAPSHOT_H
-#define SNAPSHOT_H
-
-#ifdef __cplusplus
-extern "C" {
-#endif
-
-#include "HAP.h"
-#include "HAP+Internal.h"
-
-#include <stdlib.h>
+#include <stdio.h>
 #include <string.h>
 
-#include <pthread.h>
 
-#include <turbojpeg.h>
+void hexDump (
+    const char * desc,
+    const void * addr,
+    const int len,
+    int perLine
+);
 
-#if __has_feature(nullability)
-#pragma clang assume_nonnull begin
-#endif
-
-struct MemoryStruct {
-    unsigned char* memory;
-    size_t size;
-};
-
-int getSnapshot(unsigned long * outSize, uint8_t*  outBuffer, int, int);
-
-#if __has_feature(nullability)
-#pragma clang assume_nonnull end
-#endif
-
-#ifdef __cplusplus
-}
-#endif
-
-#endif /* SNAPSHOT_H */
+void hexDumpCompare (
+    const char * desc,
+    const void * addr,
+    const void * addr2,
+    const int len,
+    int perLine
+);

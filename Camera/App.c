@@ -27,13 +27,14 @@
 
 #include "HAP.h"
 #include "HAPTLV+Internal.h"
-#include "Ffmpeg.h"
+#include "HAPCharacteristicTypes.h"
 
 #include <string.h>
 #include "App.h"
 #include "DB.h"
 #include <stdlib.h>
 #include "ingenicVideoPipeline.h"
+#include "App_Camera.h"
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 /**
@@ -51,6 +52,8 @@
 #define kAppKeyValueStoreKey_Configuration_State ((HAPPlatformKeyValueStoreDomain) 0x00)
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+ AccessoryConfiguration accessoryConfiguration;
 
 /**
  * Load the accessory state from persistent memory.
@@ -87,8 +90,13 @@ static void LoadAccessoryState(void) {
         accessoryConfiguration.state.motion.detected = false;
         accessoryConfiguration.state.operatingMode.homekitActive = true;
         accessoryConfiguration.state.operatingMode.recordingActive = kHAPCharacteristicValue_Active_Active;
-        strcpy(accessoryConfiguration.ipAddress, "192.168.14.193"); //"10.0.1.10"); // TODO - hardcode this for now
+
     }
+    accessoryConfiguration.state.streaming = kHAPCharacteristicValue_StreamingStatus_Available;
+    
+    HAPLogError(&kHAPLog_Default, "accessoryConfiguration.state.streaming address in LoadAccessoryState: %p\n", &accessoryConfiguration.state.streaming);
+    HAPLogError(&kHAPLog_Default, "streaming state: %d", accessoryConfiguration.state.streaming);
+
 }
 /**
  * Save the accessory state to persistent memory.
@@ -116,13 +124,13 @@ void SaveAccessoryState(void) {
  *
  * Note: Not constant to enable BCT Manual Name Change.
  */
-static HAPAccessory accessory = { .aid = 1,
+ HAPAccessory accessory = { .aid = 1,
                                   .category = kHAPAccessoryCategory_IPCameras,
                                   .name = "wyrecam",
                                   .manufacturer = "radredgreen",
                                   .model = "wyzec3",
                                   .serialNumber = "0001",
-                                  .firmwareVersion = "0001", // this didn't work: V6.21.5.0_191008
+                                  .firmwareVersion = "0003", // this didn't work: V6.21.5.0_191008
                                   .hardwareVersion = "wyzec3",
                                   .services = (const HAPService* const[]) { &accessoryInformationService,
                                                                             &hapProtocolInformationService,
@@ -202,6 +210,7 @@ const HAPAccessory* AppGetAccessoryInfo() {
     return &accessory;
 }
 
+
 void AppInitialize(
         HAPAccessoryServerOptions* hapAccessoryServerOptions HAP_UNUSED,
         HAPPlatform* hapPlatform HAP_UNUSED,
@@ -210,34 +219,22 @@ void AppInitialize(
 }
 
 void ContextInitialize(AccessoryContext* context) {
-    memset(context, 0, sizeof(AccessoryContext));
+    memset(context, 0, sizeof(context));
     memset(context->session.sessionId, 0, UUIDLENGTH);
     context->session.status = kHAPCharacteristicValue_StreamingStatus_Available;
-        const char ipAddress[] = "192.168.14.193";//"10.0.1.10";
-    in_addr_t ia;
-    int s;
-    s = inet_pton(AF_INET, ipAddress, &ia);
-    if (s <= 0) {
-        HAPLogError(&kHAPLog_Default, "%s\n", "Invalid address");
-        // return kHAPError_InvalidData;
-    };
-    context->session.accessoryAddress.ipAddress = ia;
-    context->session.accessoryAddress.ipAddrVersion = 0;
-    context->session.ssrcVideo = 1;
-    context->session.ssrcAudio = 1;
+    accessoryConfiguration.state.streaming = kHAPCharacteristicValue_StreamingStatus_Available;
+
+    HAPPlatformRandomNumberFill(&context->session.ssrcVideo , 4);
+    do{
+        HAPPlatformRandomNumberFill(&context->session.ssrcAudio , 4);
+    } while( context->session.ssrcVideo == context->session.ssrcAudio );
 
     StreamContextInitialize(context);
-    //    context->session->ip_address = Set this up later.
     initVideoPipeline();
-    //capture_and_encoding();
 }
 
 void ContextDeintialize(AccessoryContext* context) {
-    if (context->streamingThread) {
-        pthread_cancel(context->streamingThread);
-    }
-    StreamContextDeintialize(context);
-    free(context);
+    /*no-op*/
 }
 
 void AppDeinitialize() {

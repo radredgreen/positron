@@ -18,6 +18,8 @@ extern "C" {
 
 #include <arpa/inet.h>
 
+#include "POSRTPController.h"
+
 #if __has_feature(nullability)
 #pragma clang assume_nonnull begin
 #endif
@@ -152,7 +154,7 @@ HAPError HandleMotionDetectedRead(
 // #pragma clang assume_nonnull begin
 // #endif
 
-#define KEYLENGTH  16
+#define KEYLENGTH  32
 #define SALTLENGTH 14
 #define UUIDLENGTH 16
 
@@ -245,17 +247,25 @@ typedef struct {
 } selectedAudioParameters;
 
 typedef struct {
-    uint8_t ipAddrVersion; // Tried to use HAPIPAddressVersion but it says v4 = 1 but docs say 0.
-    in_addr_t ipAddress;
+    HAPIPAddressVersion ipAddrVersion; // Tried to use HAPIPAddressVersion but it says v4 = 1 but docs say 0.
+    char ipAddress[INET6_ADDRSTRLEN];
     HAPNetworkPort videoPort;
     HAPNetworkPort audioPort;
 } controllerAddressStruct;
 
 typedef struct {
-    uint8_t srtpMasterKey[16]; // 16 for 128, 32 for 256 crypto suite
-    uint8_t srtpMasterSalt[14];
+    uint8_t srtpMasterKey[KEYLENGTH]; // 16 for 128, 32 for 256 crypto suite
+    uint8_t srtpMasterSalt[SALTLENGTH];
     HAPCharacteristicValue_SupportedRTPConfiguration srtpCryptoSuite;
 } srtpParameters;
+
+typedef struct {
+    int socket;
+    int threadPause;
+    int threadStop;
+    int chn_num;
+    pthread_t thread;
+} POSStreamingThread;
 
 typedef struct {
     uint8_t sessionId[UUIDLENGTH];
@@ -269,6 +279,12 @@ typedef struct {
     uint32_t ssrcAudio;
     selectedVideoParameters videoParameters;
     selectedAudioParameters audioParameters;
+    POSRTPStreamRef rtpVideoStream;
+    POSRTPStreamRef rtpAudioStream;
+    POSStreamingThread videoThread; // video out
+    POSStreamingThread videoFeedbackThread; // video rtcp in
+    POSStreamingThread audioThread; // audio out
+    POSStreamingThread audioFeedbackThread; // audio rtcp in, audio in
 } streamingSession;
 
 typedef struct {

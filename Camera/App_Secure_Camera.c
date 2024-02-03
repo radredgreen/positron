@@ -8,9 +8,12 @@
 #include "HAP.h"
 #include "HAPTLV+Internal.h"
 
-#include "App_Secure_Camera.h"
 #include "App.h"
+#include "App_Secure_Camera.h"
 #include "DB.h"
+#include "POSCameraController.h"
+
+extern AccessoryConfiguration accessoryConfiguration;
 
 HAP_RESULT_USE_CHECK
 HAPError HandleEventSnapActiveRead(

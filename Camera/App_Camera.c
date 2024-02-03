@@ -11,11 +11,17 @@
 #include "App_Camera.h"
 #include "App.h"
 #include "DB.h"
-// #include "streaming.h"
-#include "Ffmpeg.h"
 #include "util_base64.h"
 
 #include <string.h>
+
+//Temporary debugging
+#include <stdio.h>
+
+// Socket, address and port lookups
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <netdb.h>
 
 /* ---------------------------------------------------------------------------------------------*/
 // TODO - Refactor these helper functions out of here.
@@ -34,8 +40,11 @@ bool isValid(void* unsused HAP_UNUSED) {
  * @return kHAPError_None           If successful.
  * @return kHAPError_InvalidData    If invalid data was encountered while parsing.
  */
+//Backup
+/*
 HAP_RESULT_USE_CHECK
 HAPError decodeIpAddress(in_addr_t* value, void* bytes, size_t numBytes) {
+printf("decodeIpAddress, %s\n", bytes);
     in_addr_t* ia = value;
     int s;
     char ipAddr[numBytes + 1]; // Not sure why unless char needs \0
@@ -47,7 +56,20 @@ HAPError decodeIpAddress(in_addr_t* value, void* bytes, size_t numBytes) {
         return kHAPError_InvalidData;
     };
     return kHAPError_None;
+};*/
+
+//value out
+//bytes in
+HAP_RESULT_USE_CHECK
+HAPError decodeIpAddress(uint8_t* value, void* bytes, size_t numBytes) {
+char dbgout[INET6_ADDRSTRLEN+1];
+//strncpy(dbgout, bytes, INET6_ADDRSTRLEN);
+//dbgout[numBytes] = 0;
+//printf("decodeIpAddress, %s\n", dbgout);
+    HAPRawBufferCopyBytes((uint8_t*) value, (uint8_t*) bytes, numBytes);
+    return kHAPError_None;
 };
+
 
 HAP_RESULT_USE_CHECK
 HAPError decodeUInt8value(uint8_t* value, void* bytes, size_t numBytes) {
@@ -69,6 +91,8 @@ HAPError decodeUInt8value(uint8_t* value, void* bytes, size_t numBytes) {
  * @return kHAPError_OutOfResources If out of resources while serializing.
  * @return kHAPError_Busy           If serialization is temporarily not possible.
  */
+// Backup
+/*
 HAPError encodeIpAddress(in_addr_t* value, void* bytes, size_t maxBytes, size_t* numBytes) {
     if (maxBytes < INET_ADDRSTRLEN) {
         return kHAPError_OutOfResources;
@@ -79,8 +103,31 @@ HAPError encodeIpAddress(in_addr_t* value, void* bytes, size_t maxBytes, size_t*
         return kHAPError_Unknown;
     }
     *numBytes = strlen(bytes);
+printf("encodeIpAddress, %s\n", bytes);
     return kHAPError_None;
 };
+*/
+HAPError encodeIpAddress(uint8_t*  value, void* bytes, size_t maxBytes, size_t* numBytes) {
+    HAPLogInfo(&kHAPLog_Default, "%s", __func__);
+    HAPRawBufferCopyBytes((uint8_t*) bytes, (uint8_t*) value, INET6_ADDRSTRLEN);
+    *numBytes = INET6_ADDRSTRLEN;
+    //printf("encodeIpAddress, %s\n", bytes);
+    return kHAPError_None;
+}
+/*
+HAPError encodeIpAddress(char value[INET6_ADDRSTRLEN], void* bytes, size_t maxBytes, size_t* numBytes) {
+    if (maxBytes < INET6_ADDRSTRLEN) {
+        return kHAPError_OutOfResources;
+    }
+    if (bytes == NULL) {
+        return kHAPError_Unknown;
+    }
+    HAPRawBufferZero(bytes, INET6_ADDRSTRLEN);
+    HAPRawBufferCopyBytes(bytes, value, numBytes);
+    *numBytes = strlen(bytes);
+    return kHAPError_None;
+};
+*/
 
 HAPError encodeUInt8UUIDValue(uint8_t* value, void* bytes, size_t maxBytes HAP_UNUSED, size_t* numBytes) {
     HAPLogInfo(&kHAPLog_Default, "%s", __func__);
@@ -143,15 +190,37 @@ HAPError encodeUInt8SaltValue(uint8_t* value, void* bytes, size_t maxBytes HAP_U
  * @return kHAPError_OutOfResources If the supplied buffer is not large enough.
  */
 
+// Backup
+/*
 HAPError getIpAddressDescription(in_addr_t* value, char* bytes, size_t maxBytes) {
     if (maxBytes < INET_ADDRSTRLEN) {
         return kHAPError_OutOfResources;
     };
     in_addr_t* ia = value;
     inet_ntop(AF_INET, ia, bytes, INET_ADDRSTRLEN);
+printf("getIpAddressDescription, %s\n", bytes);
     return kHAPError_None;
 };
-
+*/
+HAPError getIpAddressDescription(uint8_t * value, char* bytes, size_t maxBytes) {
+    char str[INET6_ADDRSTRLEN];
+    HAPRawBufferCopyBytes(bytes, value, INET6_ADDRSTRLEN);
+    //printf("getIpAddressDescription, %s\n", bytes);
+    return kHAPError_None;
+};
+/*
+HAPError getIpAddressDescription(char value[INET6_ADDRSTRLEN], char* bytes, size_t maxBytes) {
+    if (maxBytes < INET6_ADDRSTRLEN) {
+        return kHAPError_OutOfResources;
+    }
+    if (bytes == NULL) {
+        return kHAPError_Unknown;
+    }
+    HAPRawBufferZero(bytes, INET6_ADDRSTRLEN);
+    HAPRawBufferCopyBytes(bytes, value, INET6_ADDRSTRLEN);
+    return kHAPError_None;
+};
+*/
 HAPError getUInt8ValueDescription(uint8_t* value HAP_UNUSED, char* bytes, size_t maxBytes HAP_UNUSED) {
     char description[] = "UInt8 Value Description";
     HAPRawBufferCopyBytes(bytes, description, sizeof(description));
@@ -203,7 +272,8 @@ supportedAudioConfigStruct supportedAudioConfigValue =
         {
             .audioChannels = 1,  // 1 channel
             .bitRate = 0,        // Variable
-            .sampleRate = 1      // 16kHz 8 not supported on MBP
+            .sampleRate = 1,      // 16kHz 8 not supported on MBP
+            .rtpTime = 30        // 30 ms per packet
         }
     },
     .comfortNoiseSupport = false
@@ -283,6 +353,7 @@ const AudioCodecConfigFormat audioCodecParamsFormat = {
     .members = (const HAPStructTLVMember* const[]) { &audioCodecParamsAudioChannelsMember,
                                                      &audioCodecParamsBitRateMember,
                                                      &audioCodecParamsSampleRateMember,
+                                                     &audioCodecParamsRTPTimeMember,//HERE
                                                      NULL },
     .callbacks = { .isValid = isValid }
 };
@@ -335,7 +406,7 @@ supportedVideoConfigStruct supportedVideoConfigValue = {
                                                 .level = 2,
                                                 .packetizationMode = 0,
                                                 .CVOEnabled = 0 }, // TODO - Make enums for profileID, and level
-                          .videoAttributes = { .imageWidth = 1920, .imageHeight = 1080, .frameRate = 30 } }
+                          .videoAttributes = { .imageWidth = 1920, .imageHeight = 1080, .frameRate = 25 } }
 };
 
 HAP_STRUCT_TLV_SUPPORT(void, SupportedVideoConfigFormat)
@@ -389,7 +460,7 @@ const HAPStructTLVMember videoCodecParamsCVOEnabledMember = { .valueOffset =
                                                               .tlvType = 4,
                                                               .debugDescription = "CVO Enabled",
                                                               .format = &videoCodecParamsCVOEnabledFormat,
-                                                              .isOptional = false,
+                                                              .isOptional = true, //todo, testing
                                                               .isFlat = false };
 
 /* ---------------------------------------------------------------------------------------------*/
@@ -412,7 +483,7 @@ const VideoCodecConfigFormat videoCodecParamsFormat = {
     .members = (const HAPStructTLVMember* const[]) { &videoCodecParamsProfileIDMember,
                                                      &videoCodecParamsLevelMember,
                                                      &videoCodecParamsPacketizationModeMember,
-                                                     &videoCodecParamsCVOEnabledMember,
+                                                     //&videoCodecParamsCVOEnabledMember,
                                                      NULL },
     .callbacks = { .isValid = isValid }
 };
@@ -517,7 +588,7 @@ HAP_STRUCT_TLV_SUPPORT(void, AudioRTPParametersTypeFormat);
 HAP_STRUCT_TLV_SUPPORT(void, SelectedVideoParametersFormat);
 HAP_STRUCT_TLV_SUPPORT(void, SelectedAudioParametersFormat);
 HAP_STRUCT_TLV_SUPPORT(void, SessionControlTypeFormat);
-HAP_VALUE_TLV_SUPPORT(in_addr_t, IpAddressTypeFormat);
+HAP_VALUE_TLV_SUPPORT(uint8_t, IpAddressTypeFormat);
 HAP_VALUE_TLV_SUPPORT(uint8_t, SessionIdTypeFormat);
 HAP_VALUE_TLV_SUPPORT(uint8_t, SrtpMasterKeyTypeFormat);
 HAP_VALUE_TLV_SUPPORT(uint8_t, SrtpMasterSaltTypeFormat);
@@ -552,7 +623,7 @@ const HAPStructTLVMember ipAddressTypeMember = { .valueOffset = HAP_OFFSETOF(con
                                                  .isFlat = false };
 
 const HAPUInt16TLVFormat rtpPortTypeFormat = { .type = kHAPTLVFormatType_UInt16,
-                                               .constraints = { .minimumValue = 49152, .maximumValue = 65535 },
+                                               .constraints = { .minimumValue = 1024, .maximumValue = 65535 },
                                                .callbacks = { .getBitDescription = NULL, .getDescription = NULL } };
 
 const HAPStructTLVMember videoPortTypeMember = { .valueOffset = HAP_OFFSETOF(controllerAddressStruct, videoPort),
@@ -1008,7 +1079,7 @@ const SelectedRTPFormat selectedRTPFormatWrite = {
     .callbacks = { .isValid = isValid }
 };
 
-// TODO - Use this instead of actually putting it in HandlSupportedVideoRead.
+// TODO - Use this instead of actually putting it in HandleSupportedVideoRead.
 const HAPTLV videoConfig = { .type = 0x01,
                              .value = { .bytes =
                                                 (uint8_t[]) {
@@ -1025,15 +1096,15 @@ const HAPTLV videoConfig = { .type = 0x01,
                                                         0x03, 0x0B,             // Attributes
                                                         0x01, 0x02, 0x80, 0x07, // Width 1920 - bytes flipped
                                                         0x02, 0x02, 0x38, 0x04, // Height 1080 - bytes flipped
-                                                        0x03, 0x01, 0x1E,       // Framerate
+                                                        0x03, 0x01, 0x18,       // Framerate
                                                         0x03, 0x0B,             // Attributes
                                                         0x01, 0x02, 0x00, 0x05, // Width 1280 - bytes flipped
                                                         0x02, 0x02, 0xD0, 0x02, // Height 720 - bytes flipped
-                                                        0x03, 0x01, 0x1E,       // Framerate
+                                                        0x03, 0x01, 0x18,       // Framerate
                                                         0x03, 0x0B,             // Attributes
                                                         0x01, 0x02, 0x40, 0x01, // Width 320 - bytes flipped
                                                         0x02, 0x02, 0xF0, 0x00, // Height 240 - bytes flipped
-                                                        0x03, 0x01, 0x0F        // Framerate
+                                                        0x03, 0x01, 0x18        // Framerate
                                                 },
                                         .numBytes = 0x44 } };
 
@@ -1095,6 +1166,8 @@ HAPError VerifyCodecConfigTLV(void* actualBytes, size_t numActualBytes) {
     return err;
 };
 
+extern AccessoryConfiguration accessoryConfiguration;
+
 HAP_RESULT_USE_CHECK
 HAPError HandleStreamingStatusRead(
         HAPAccessoryServerRef* server HAP_UNUSED,
@@ -1103,6 +1176,9 @@ HAPError HandleStreamingStatusRead(
         void* _Nullable context HAP_UNUSED) {
 
     HAPLogInfo(&kHAPLog_Default, "%s", __func__);
+
+    printf("accessoryConfiguration.state.streaming address in HandleStreamingStatusRead: %p\n", &accessoryConfiguration.state.streaming);
+
     HAPLogInfo(&kHAPLog_Default, "streaming state: %d", accessoryConfiguration.state.streaming);
     HAPError err;
 
@@ -1291,12 +1367,22 @@ HAPError HandleSupportedVideoRead(
                                                             0x04, // Height 1080 - bytes flipped
                                                             0x03,
                                                             0x01,
-                                                            0x1E, // Framerate
-                                                            // 0xFF, 0x00,              // Seperator
-                                                            // 0x03, 0x0B,             // Attributes
-                                                            // 0x01, 0x02, 0x00, 0x05, // Width 1280 - bytes flipped
-                                                            // 0x02, 0x02, 0xD0, 0x02, // Height 720 - bytes flipped
-                                                            // 0x03, 0x01, 0x1E,       // Framerate
+                                                            0x18, // Framerate
+                                                            0xFF, 0x00,              // Seperator
+                                                            0x03, 0x0B,             // Attributes
+                                                            0x01, 0x02, 0x00, 0x05, // Width 1280 - bytes flipped
+                                                            0x02, 0x02, 0xD0, 0x02, // Height 720 - bytes flipped
+                                                            0x03, 0x01, 0x18,       // Framerate
+                                                            0xFF, 0x00,              // Seperator
+                                                            0x03, 0x0B,             // Attributes
+                                                            0x01, 0x02, 0x00, 0x04, // Width 1024 - bytes flipped
+                                                            0x02, 0x02, 0x40, 0x02, // Height 576 - bytes flipped
+                                                            0x03, 0x01, 0x18,       // Framerate
+                                                            0xFF, 0x00,              // Seperator
+                                                            0x03, 0x0B,             // Attributes
+                                                            0x01, 0x02, 0x20, 0x03, // Width 800 - bytes flipped
+                                                            0x02, 0x02, 0xc2, 0x01, // Height 450 - bytes flipped
+                                                            0x03, 0x01, 0x18,       // Framerate
                                                             0xFF,
                                                             0x00, // Seperator
                                                             0x03,
@@ -1307,11 +1393,11 @@ HAPError HandleSupportedVideoRead(
                                                             0x02, // Width 640 - bytes flipped
                                                             0x02,
                                                             0x02,
-                                                            0xE0,
-                                                            0x01, // Height 480 - byte flipped
+                                                            0x68,
+                                                            0x01, // Height 360 - byte flipped
                                                             0x03,
                                                             0x01,
-                                                            0x1E, // Framerate
+                                                            0x18, // Framerate
                                                             0xFF,
                                                             0x00, // Seperator
                                                             0x03,
@@ -1322,13 +1408,13 @@ HAPError HandleSupportedVideoRead(
                                                             0x01, // Width 320 - bytes flipped
                                                             0x02,
                                                             0x02,
-                                                            0xF0,
-                                                            0x00, // Height 240 - bytes flipped
+                                                            0xB4,
+                                                            0x00, // Height 180 - bytes flipped
                                                             0x03,
                                                             0x01,
                                                             0x0F // Framerate
                                                     },
-                                            .numBytes = 0x48 } }; // 12 * 3 + 6 * 4 + 6 * 2
+                                            .numBytes = 0x48 + 15 * 3 } }; // 12 * 3 + 6 * 4 + 6 * 2 + 15 *3
     // err = VerifyCodecConfigTLV((void*) &videoConfig, 72);
     // HAPAssert(!err);
     err = HAPTLVWriterAppend(responseWriter, &videoConfig);
@@ -1347,7 +1433,7 @@ HAPError HandleSupportedRTPConfigRead(
 
     HAPError err;
 
-    uint8_t supportedSRTPcryptoSuite = 0; // 0 - AES_CM_128_HMAC_SHA1_80
+    uint8_t supportedSRTPcryptoSuite = 1; // 0 - AES_CM_128_HMAC_SHA1_80. 1 - aes256
 
     err = HAPTLVWriterAppend(
             responseWriter,
@@ -1381,36 +1467,34 @@ HAPError HandleSelectedRTPConfigWrite(
     AccessoryContext* myContext = context;
     selectedRTPStruct selectedRtp;
     HAPError err;
-
     err = HAPTLVReaderDecode(requestReader, &selectedRTPFormatWrite, &selectedRtp);
 
     if (HAPRawBufferAreEqual(myContext->session.sessionId, selectedRtp.control.sessionId, UUIDLENGTH)) {
         myContext->session.videoParameters = selectedRtp.videoParameters;
         myContext->session.audioParameters = selectedRtp.audioParameters;
         if (selectedRtp.control.command == kHAPCharacteristicValue_RTPCommand_Start) {
-            HAPLogDebug(&kHAPLog_Default, "Starting stream.");
-            pthread_create(&myContext->streamingThread, NULL, startOutStream, context);
+            HAPLogDebug(&kHAPLog_Default, "Starting stream");
             accessoryConfiguration.state.streaming = kHAPCharacteristicValue_StreamingStatus_InUse;
-            // startStream(context);
+            posStartStream(context);
         } else if (selectedRtp.control.command == kHAPCharacteristicValue_RTPCommand_End) {
-            HAPLogDebug(&kHAPLog_Default, "Ending Stream.");
+            HAPLogDebug(&kHAPLog_Default, "Ending Stream");
             accessoryConfiguration.state.streaming = kHAPCharacteristicValue_StreamingStatus_Available;
-            if (myContext->streamingThread) {
-                int s;
-                s = pthread_cancel(myContext->streamingThread);
-                if (s) {
-                    HAPLogDebug(&kHAPLog_Default, "Thread didn't cancel.");
-                }
-                myContext->streamingThread = 0;
-            }
+            posStopStream(context);
         } else if (selectedRtp.control.command == kHAPCharacteristicValue_RTPCommand_Reconfigure) {
-            HAPLogDebug(&kHAPLog_Default, "Reconfiguring Stream.");
-            /* code */
+            HAPLogDebug(&kHAPLog_Default, "Reconfiguring Stream");
+            posReconfigureStream(context);
+        } else if (selectedRtp.control.command == kHAPCharacteristicValue_RTPCommand_Suspend) {
+            HAPLogDebug(&kHAPLog_Default, "Suspending Stream");
+            posSuspendStream(context);
+        } else if (selectedRtp.control.command == kHAPCharacteristicValue_RTPCommand_Resume) {
+            HAPLogDebug(&kHAPLog_Default, "Resuming Stream");
+            posResumeStream(context);
         } else {
-            HAPLogDebug(&kHAPLog_Default, "control command: %d", selectedRtp.control.command);
+            HAPLogDebug(&kHAPLog_Default, "Unknown stream configuration control command: %d", selectedRtp.control.command);
         }
     }
 
+        
     // HAPError err;
 
     // const HAPTLVReader* myReader = (const HAPTLVReader*)requestReader;
@@ -1461,47 +1545,173 @@ HAPError HandleSelectedRTPConfigWrite(
     return kHAPError_None;
 }
 
+
+int OpenSocket(
+    const char *localAddr, // out, needs to be INET6_ADDRSTRLEN long
+    uint16_t *localPort, // out 
+    const char *remoteAddr, // in
+    uint16_t remotePort){ // in
+
+    // Open the socket on read endpoint to get the outbound IP address and port
+    // adapted from 'man getaddrinfo'
+    int              sfd, s;
+    size_t           len;
+    ssize_t          nread;
+    struct addrinfo  hints;
+    struct addrinfo  *result, *rp;
+
+    /* Obtain address(es) matching host video address/port. */
+    memset(&hints, 0, sizeof(hints));
+    hints.ai_family = AF_UNSPEC;    /* Allow IPv4 or IPv6 */
+    hints.ai_socktype = SOCK_DGRAM; /* Datagram socket */
+    hints.ai_flags = 0;
+    hints.ai_protocol = 0;          /* Any protocol */
+
+    char portStr[32];
+    snprintf(portStr, 32, "%d", remotePort);
+    s = getaddrinfo(remoteAddr, &portStr, &hints, &result);
+    if (s != 0) {
+        HAPLogError(&kHAPLog_Default, "getaddrinfo failed: %s\n", gai_strerror(s));
+        return -1;
+    }
+
+    /* getaddrinfo() returns a list of address structures.
+        Try each address until we successfully connect(2).
+        If socket(2) (or connect(2)) fails, we (close the socket
+        and) try the next address. */
+
+    for (rp = result; rp != NULL; rp = rp->ai_next) {
+        sfd = socket(rp->ai_family, rp->ai_socktype,
+                    rp->ai_protocol);
+        if (sfd == -1)
+            continue;
+
+        if (connect(sfd, rp->ai_addr, rp->ai_addrlen) != -1)
+            break;                  /* Success */
+
+        close(sfd);
+    }
+    freeaddrinfo(result);           /* No longer needed */
+    if (rp == NULL) {               /* No address succeeded */
+        HAPLogError(&kHAPLog_Default, "Could not connect to controller port at: %s:%d", 
+                    remoteAddr, 
+                    remotePort);
+        return -1;
+    }
+
+    HAPLogDebug(&kHAPLog_Default, "Connection success to controller port at: %s:%d", 
+                    remoteAddr, 
+                    remotePort);
+    HAPLogDebug(&kHAPLog_Default, "Connection success to controller. FD: %d", sfd);
+
+    struct sockaddr_in localAddress;
+    socklen_t addressLength = sizeof(localAddress);
+    if (getsockname(sfd, (struct sockaddr*)&localAddress,&addressLength) != 0){
+        HAPLogError(&kHAPLog_Default, "getsockname failed.");
+        return -1;
+    }
+
+    *localPort = ntohs(localAddress.sin_port);
+    strncpy(localAddr, inet_ntoa( localAddress.sin_addr), INET6_ADDRSTRLEN);
+    HAPLogDebug(&kHAPLog_Default, "Local connection at: %s:%d", 
+                localAddr, 
+                *localPort);
+    return sfd;
+}
+
 HAP_RESULT_USE_CHECK
 HAPError HandleSetupEndpointsRead(
         HAPAccessoryServerRef* server HAP_UNUSED,
         const HAPTLV8CharacteristicReadRequest* request HAP_UNUSED,
         HAPTLVWriterRef* responseWriter HAP_UNUSED,
         void* _Nullable context) {
-
-    HAPLogInfo(&kHAPLog_Default, "%s", __func__);
+    HAPLogDebug(&kHAPLog_Default, "%s", __func__);
     HAPError err;
-    AccessoryContext* myContext = context;
-    // streamingSession* newSession = &(myContext->session);
 
-    // HAPLogDebug(&kHAPLog_Default, "",
-    // myContext->session.accessoryAddress.
-    // )
+    AccessoryContext* myContext = context;
+
+    // close the socket in prepairation for new connection
+    if(myContext->session.videoThread.socket >  0){
+        HAPLogInfo(&kHAPLog_Default, "Closing a videoStream socket");
+        close(myContext->session.videoThread.socket);
+        myContext->session.videoThread.socket = -1;
+        myContext->session.videoFeedbackThread.socket = -1;
+    }
+    if(myContext->session.audioThread.socket >  0){
+        HAPLogInfo(&kHAPLog_Default, "Closing a audioStream socket");
+        close(myContext->session.audioThread.socket);
+        myContext->session.audioThread.socket = -1;
+        myContext->session.audioFeedbackThread.socket = -1;
+    }
+
+    int sfd = OpenSocket(
+        &myContext->session.accessoryAddress.ipAddress,
+        &myContext->session.accessoryAddress.videoPort,
+        &myContext->session.controllerAddress.ipAddress,
+        myContext->session.controllerAddress.videoPort);
+
+    if(sfd > 0){
+        myContext->session.videoThread.socket = sfd;
+        myContext->session.videoFeedbackThread.socket = sfd;
+    } else {
+        myContext->session.videoThread.socket = -1;
+        myContext->session.videoFeedbackThread.socket = -1;
+    }
+
+    HAPLogInfo(&kHAPLog_Default, "Local socket of video connection: %s, %d", 
+           myContext->session.accessoryAddress.ipAddress, 
+           myContext->session.accessoryAddress.videoPort);
+
+    int sfd_audio = OpenSocket(
+        &myContext->session.accessoryAddress.ipAddress,
+        &myContext->session.accessoryAddress.audioPort,
+        &myContext->session.controllerAddress.ipAddress,
+        myContext->session.controllerAddress.audioPort);
+
+    if(sfd_audio > 0){
+        myContext->session.audioThread.socket = sfd_audio;
+        myContext->session.audioFeedbackThread.socket = sfd_audio;
+    } else {
+        myContext->session.audioThread.socket = -1;
+        myContext->session.audioFeedbackThread.socket = -1;
+    }
+
+    HAPLogInfo(&kHAPLog_Default, "Local socket of audio connection: %s, %d", 
+           myContext->session.accessoryAddress.ipAddress, 
+           myContext->session.accessoryAddress.audioPort);
+           
+    //myContext->session.controllerAddress.ipAddrVersion = 0;
+    //myContext->session.accessoryAddress.ipAddrVersion = 0;
+
+    /*&sessionIdTypeMember,
+    &setupWriteStatusTypeMember,
+    &accessoryAddressTypeMember,
+    &videoParamsTypeMember,
+    &audioParamsTypeMember,
+    &ssrcVideoTypeMember,
+    &ssrcAudioTypeMember,*/
+
+    myContext->session.accessoryAddress.ipAddrVersion = myContext->session.controllerAddress.ipAddrVersion;
+
+    printf("myContext->session.sessionId: %s\n", myContext->session.sessionId);
+    printf("myContext->session.setupWriteStatus: %s\n", myContext->session.setupWriteStatus);
+    printf("myContext->session.accessoryAddress.audioPort: %d\n", myContext->session.accessoryAddress.audioPort);
+    printf("myContext->session.accessoryAddress.ipAddress: %s\n", myContext->session.accessoryAddress.ipAddress);
+    printf("myContext->session.accessoryAddress.videoPort, %d\n",myContext->session.accessoryAddress.videoPort);
+    printf("myContext->session.accessoryAddress.ipAddrVersion, %d\n", myContext->session.accessoryAddress.ipAddrVersion);
+    printf("myContext->session.videoParams.srtpCryptoSuite: %d\n,", myContext->session.videoParams.srtpCryptoSuite);;
+    printf("myContext->session.videoParams.srtpMasterKey, %16x\n", myContext->session.videoParams.srtpMasterKey);
+    printf("myContext->session.videoParams.srtpMasterSalt: %16x\n", myContext->session.videoParams.srtpMasterSalt);
+    printf("myContext->session.audioParams.srtpCryptoSuite: %d\n,", myContext->session.audioParams.srtpCryptoSuite);;
+    printf("myContext->session.audioParams.srtpMasterKey, %16x\n", myContext->session.audioParams.srtpMasterKey);
+    printf("myContext->session.audioParams.srtpMasterSalt: %16x\n", myContext->session.audioParams.srtpMasterSalt);
+    printf("myContext->session.ssrcVideo: %d", myContext->session.ssrcVideo);
+    printf("myContext->session.ssrcAudio: %d", myContext->session.ssrcAudio);
+
 
     err = HAPTLVWriterEncode(responseWriter, &streamingSessionFormatRead, &(myContext->session));
 
-    // err = handleSessionRead(responseWriter, &(myContext->session));
-
     return err;
-    /*
-        HAPError err;
-
-        void* bytes;
-        size_t maxBytes;
-        HAPTLVWriterGetScratchBytes(responseWriter, &bytes, &maxBytes);
-
-        err = HAPTLVWriterAppend(
-                responseWriter,
-                &(const HAPTLV) { .type = 2, // Status
-                                  .value = { .bytes = &accessoryConfiguration.state.streaming, .numBytes = 1 } });
-
-        err = HAPTLVWriterAppend(
-                responseWriter,
-                &(const HAPTLV) { .type = 3, // Address
-                                  .value = { .bytes = &accessoryConfiguration.ipAddress, .numBytes = 9 } });
-
-        HAPAssert(!err);
-     */
-    return kHAPError_None;
 }
 
 HAP_RESULT_USE_CHECK
@@ -1512,20 +1722,28 @@ HAPError HandleSetupEndpointsWrite(
         void* _Nullable context) {
     // HAPPrecondition(requestReader);
 
-    HAPLogInfo(&kHAPLog_Default, "%s", __func__);
+    HAPLogDebug(&kHAPLog_Default, "%s", __func__);
     HAPError err;
     AccessoryContext* myContext = context;
     streamingSession* newSession = &(myContext->session);
-    // controllerAddressStruct* accesoryAddress = &(newSession->accessoryAddress);
 
-    // err = handleSessionWrite(requestReader, newSession);
+    // close the socket in prepairation for new connection
+    if(myContext->session.videoThread.socket >  0){
+        close(myContext->session.videoThread.socket);
+        myContext->session.videoThread.socket = -1;
+        myContext->session.videoFeedbackThread.socket = -1;
+        HAPLogError(&kHAPLog_Default, "Unexpectedly closing an open videoStream socket!");
+    }
+    if(myContext->session.audioThread.socket >  0){
+        close(myContext->session.audioThread.socket);
+        myContext->session.audioThread.socket = -1;
+        myContext->session.audioFeedbackThread.socket = -1;
+        HAPLogError(&kHAPLog_Default, "Unexpectedly closing an open audioStream socket!");
+    }
     err = HAPTLVReaderDecode(requestReader, &streamingSessionFormatWrite, newSession);
 
-    newSession->accessoryAddress.audioPort = newSession->controllerAddress.audioPort;
-    newSession->accessoryAddress.videoPort = newSession->controllerAddress.videoPort;
-    newSession->setupWriteStatus = 0;
 
-    return kHAPError_None;
+    return err;
 }
 
 HAP_RESULT_USE_CHECK

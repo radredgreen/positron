@@ -6,7 +6,9 @@
 
 #include "App.h"
 #include "DB.h"
-#include "Ffmpeg.h"
+
+#include <pthread.h>
+#include <sys/prctl.h>
 
 #include "HAP.h"
 #include "HAPPlatform+Init.h"
@@ -80,7 +82,7 @@ extern const HAPAccessory* AppGetAccessoryInfo();
 static void InitializePlatform() {
     // Key-value store.
     HAPPlatformKeyValueStoreCreate(
-            &platform.keyValueStore, &(const HAPPlatformKeyValueStoreOptions) { .rootDirectory = "/PositronStore/.HomeKitStore" });
+            &platform.keyValueStore, &(const HAPPlatformKeyValueStoreOptions) { .rootDirectory = "/PositronStore/.HomeKitStore/" });
     platform.hapPlatform.keyValueStore = &platform.keyValueStore;
 
     // Accessory setup manager. Depends on key-value store.
@@ -301,10 +303,6 @@ int main(int argc HAP_UNUSED, char* _Nullable argv[_Nullable] HAP_UNUSED) {
     AppInitialize(&platform.hapAccessoryServerOptions, &platform.hapPlatform, &platform.hapAccessoryServerCallbacks);
     ContextInitialize(&context);
 
-    if (pthread_create(&context.inStreamThread, NULL, startInStream, &context)) {
-        HAPLogInfo(&kHAPLog_Default, "Failed to start input stream thread.\n");
-    }
-
     // Initialize accessory server.
     HAPAccessoryServerCreate(
             &accessoryServer,
@@ -319,6 +317,8 @@ int main(int argc HAP_UNUSED, char* _Nullable argv[_Nullable] HAP_UNUSED) {
 
     // Start accessory server for App.
     AppAccessoryServerStart();
+
+    prctl(PR_SET_NAME, "hap_run_loop");
 
     // Run main loop until explicitly stopped.
     HAPPlatformRunLoopRun();

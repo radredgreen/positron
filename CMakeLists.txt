@@ -5,6 +5,7 @@ set(CMAKE_VERBOSE_MAKEFILE ON)
 set(CMAKE_CXX_STANDARD 11)
 
 set (HOMEKIT_ADK "HomeKitADK")
+set (fdk-aac "fdk-aac")
 
 # Set the project name
 project(positron)
@@ -14,6 +15,20 @@ include_directories(${CMAKE_SOURCE_DIR}/)
 include_directories(${CMAKE_SOURCE_DIR}/include/imp_sys)
 include_directories( "include"
     "Camera"
+	"DiffTests"
+    "${fdk-aac}/libAACenc/include"
+    "${fdk-aac}/libAACdec/include"
+    "${fdk-aac}/libArithCoding/include"
+    "${fdk-aac}/libDRCdec/include"
+    "${fdk-aac}/libSBRenc/include"
+    "${fdk-aac}/libSBRdec/include"
+    "${fdk-aac}/libFDK/include"
+    "${fdk-aac}/libSYS/include"
+	"${fdk-aac}/libMpegTPEnc/include"
+	"${fdk-aac}/libMpegTPDec/include"
+	"${fdk-aac}/libPCMutils/include"
+	"${fdk-aac}/libSACenc/include"
+	"${fdk-aac}/libSACdec/include"
     "${HOMEKIT_ADK}/HAP"
     "${HOMEKIT_ADK}/PAL"
     "${HOMEKIT_ADK}/PAL/Linux"
@@ -61,19 +76,20 @@ mark_as_advanced(MBEDTLS_INCLUDE_DIRS MBEDTLS_LIBRARY MBEDX509_LIBRARY MBEDCRYPT
 
 # The source files are all the *.c files
 file(GLOB POSITRON_SRC_FILES 
-	"Camera/musl_shim.c"
-	"Camera/capture_and_encoding.cpp"
-	"Camera/sample-common.c"
-	"Camera/ingenicVideoPipeline.c"
-	"Camera/Main.c"
-	"Camera/App_Camera.c"
-	"Camera/App_Secure_Camera.c"
-	"Camera/App.c"
-	"Camera/DB.c"
-	"Camera/Ffmpeg.c"
-	"Camera/sample-common.c"
-	"Camera/snapshot.c"
-	"Camera/pwm.c"
+	"Camera/*"
+    "${fdk-aac}/libAACenc/src/*.cpp"
+    "${fdk-aac}/libAACdec/src/*.cpp"
+    "${fdk-aac}/libArithCoding/src/*.cpp"
+    "${fdk-aac}/libDRCdec/src/*.cpp"
+    "${fdk-aac}/libSBRenc/src/*.cpp"
+    "${fdk-aac}/libSBRdec/src/*.cpp"
+    "${fdk-aac}/libFDK/src/*.cpp"
+    "${fdk-aac}/libSYS/src/*.cpp"
+    "${fdk-aac}/libMpegTPEnc/src/*.cpp"
+    "${fdk-aac}/libMpegTPDec/src/*.cpp"
+    "${fdk-aac}/libPCMutils/src/*.cpp"
+    "${fdk-aac}/libSACenc/src/*.cpp"
+    "${fdk-aac}/libSACdec/src/*.cpp"
 	"${HOMEKIT_ADK}/PAL/Linux/HAPPlatform.c"
 	"${HOMEKIT_ADK}/PAL/Linux/HAPPlatformAbort.c"
 	"${HOMEKIT_ADK}/PAL/Linux/HAPPlatformAccessorySetup.c"
@@ -165,14 +181,13 @@ file(GLOB POSITRON_SRC_FILES
 	"${HOMEKIT_ADK}/External/HTTP/util_http_reader.c"
 	"${HOMEKIT_ADK}/External/Base64/util_base64.c")
 
-message(STATUS "Source files for positron binary: ${POSITRON_SRC_FILES}")
-
 
 set (LOG_LEVEL_Debug 3)
+set (LOG_LEVEL_Info 2)
 set (LOG_LEVEL_Test 1)
 set (LOG_LEVEL_Release 0)
 
-add_definitions(-DHAP_LOG_LEVEL=${LOG_LEVEL_Test})
+add_definitions(-DHAP_LOG_LEVEL=${LOG_LEVEL_Debug})
 add_definitions(-DIP=1)
 
 ######################
@@ -189,28 +204,20 @@ add_executable(positron ${POSITRON_SRC_FILES})
 set(CMAKE_THREAD_PREFER_PTHREAD TRUE)
 set(THREADS_PREFER_PTHREAD_FLAG TRUE)
 find_package (Threads)
-target_link_libraries (${PROJECT_NAME} Threads::Threads) 
+target_link_libraries (positron Threads::Threads) 
 
 # static link of stdc++ if available
 if (STATICSTDCPP)
   include(CheckCXXCompilerFlag)
   CHECK_CXX_COMPILER_FLAG("-static-libgcc" CXX_SUPPORTS_STATIC_LIBGCC)
   if (CXX_SUPPORTS_STATIC_LIBGCC) 
-    target_link_libraries (${CMAKE_PROJECT_NAME} -static-libgcc)
+    target_link_libraries (positron -static-libgcc)
   endif()    
   CHECK_CXX_COMPILER_FLAG("-static-libstdc++" CXX_SUPPORTS_STATIC_LIBSTDCPP)
   if (CXX_SUPPORTS_STATIC_LIBSTDCPP) 
-    target_link_libraries (${CMAKE_PROJECT_NAME} -static-libstdc++)
+    target_link_libraries (positron -static-libstdc++)
   endif()
 endif()
-
-
-
-#find_package( Threads REQUIRED )
-#target_link_libraries( positron ${CMAKE_THREAD_LIBS_INIT} )
-#target_link_libraries( positron rt )
-#target_link_libraries( positron m )
-#target_link_libraries( positron pthread )
 
 
 target_link_libraries(positron ${CMAKE_SOURCE_DIR}/lib/imp_sys/uclibc/libimp.so )
@@ -235,7 +242,6 @@ set_property(TARGET positron PROPERTY C_STANDARD 99)
 #foreach (_variableName ${_variableNames})
 #    message(STATUS "${_variableName}=${${_variableName}}")
 #endforeach()
-
 
 install(TARGETS positron DESTINATION bin)
 

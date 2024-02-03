@@ -16,35 +16,30 @@
  */
 
 
-
-
-#ifndef SNAPSHOT_H
-#define SNAPSHOT_H
+#ifndef POSCAMERACONTROLLER_H
+#define POSCAMERACONTROLLER_H
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
 #include "HAP.h"
-#include "HAP+Internal.h"
+#include "HAPBase.h"
 
-#include <stdlib.h>
-#include <string.h>
-
+//#include "App_Camera.h"
+#include "App.h"
 #include <pthread.h>
 
-#include <turbojpeg.h>
 
-#if __has_feature(nullability)
-#pragma clang assume_nonnull begin
-#endif
 
-struct MemoryStruct {
-    unsigned char* memory;
-    size_t size;
-};
+void StreamContextInitialize(AccessoryContext* context);
+void StreamContextDeintialize(AccessoryContext* context); 
+void* posStartStream(AccessoryContext* context HAP_UNUSED);
+void* posStopStream(AccessoryContext* context HAP_UNUSED);
+void* posReconfigureStream(AccessoryContext* context HAP_UNUSED);
+void* posSuspendStream(AccessoryContext* context HAP_UNUSED) ;
+void* posResumeStream(AccessoryContext* context HAP_UNUSED) ;
 
-int getSnapshot(unsigned long * outSize, uint8_t*  outBuffer, int, int);
 
 #if __has_feature(nullability)
 #pragma clang assume_nonnull end
@@ -54,4 +49,4 @@ int getSnapshot(unsigned long * outSize, uint8_t*  outBuffer, int, int);
 }
 #endif
 
-#endif /* SNAPSHOT_H */
+#endif

@@ -1,51 +1,66 @@
+/* 
+ * This file is part of the positron distribution (https://github.com/radredgreen/positron).
+ * Copyright (c) 2024 RadRedGreen.
+ * 
+ * This program is free software: you can redistribute it and/or modify  
+ * it under the terms of the GNU General Public License as published by  
+ * the Free Software Foundation, version 3.
+ *
+ * This program is distributed in the hope that it will be useful, but 
+ * WITHOUT ANY WARRANTY; without even the implied warranty of 
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU 
+ * General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License 
+ * along with this program. If not, see <http://www.gnu.org/licenses/>.
+ */
+
+
 /*
   * Threads:
   *
   *     homekit
-  *         Description: Handles pairing, Calls event handlers
+  *         Description: Handles pairing, Calls event handlers, gets snapshots
   * 
   *     gpio (NOT IMPLEMENTED YET)
-  *         Description: polls the button
+  *         Description: monitors the button and does what?
   * 
-  *     day_night
+  *     exposure monitoring
   *         Description: polls the brightness and sets the leds and IR filter
   * 
-  *     udp input listener (ephemeral) (NOT IMPLEMENTED YET)
-  *         Description: listens for speaker data and handles rtcp
+  *     audio feeback (ephemeral) 
+  *         Description: listens for speaker data, pushes audio to ring buffer and handles rtcp
   * 
-  *     udp output listener (ephemeral) (NOT IMPLEMENTED YET)
-  *         Description: listens for rctp data
+  *     speaker playback (ephemeral)
+  *         Description: waits for ring buffer and pushes audio data
   * 
-  *     video 0 thread (SRTP video stream) (ephemeral) (NOT connected to Homekit YET)
+  *     video feedback (ephemeral) 
+  *         Description: listens for video rctp data
+  * 
+  *     video 0 thread (SRTP video stream) (ephemeral) 
   *         Description: waits for NALs and creates SRTP packets
   * 
-  *     video 1 thread ( HKSV ) (ephemeral) (NOT IMPLEMENTED YET)
+  *     video 1 thread ( HKSV ) (ephemeral) 
   *         Description: buffers video data and sends mp4 frames to hub / apple tv
-  *         Created By:
-  *         Destroyed By:
-  *         Pipe Inputs:
-  *         Pipe Outputs:
   * 
   *     snapshot thread ( jpeg ) (ephemeral)
   *         Description: buffers video data and sends mp4 frames to hub / apple tv
-  *         Created By:
-  *         Destroyed By:
-  *         Pipe Inputs:
-  *         Pipe Outputs:
   * 
-  *     audio input (ephemeral) (NOT IMPLEMENTED YET)
+  *     audio input (ephemeral) 
   *         Description: waits for microphone data and sends srtp packets
   * 
-  *     motion (ephemeral) (NOT connected to Homekit YET)
+  *     motion (ephemeral) 
   *         Description: polls the motion sensor and updates homekit status
   * 
 */
 
 
-/*
-  * framesource.0 ------------------------> encoder group 0 -----> encoder channel 0 (global encChn 0) ( H264 SRTP Videostream )
-  * framesource.1 -----> ivs group 0 -----> encoder group 1 -----> encoder channel 0 (global encChn 1) ( H264 HKSV DVR )
-  *                                                           +--> encoder channel 1 (global encChn 2) ( JPEG ( Scale ) )
+/*	
+  * Video pipeline configuration:
+  *
+  * framesource.1 ------------------------> encoder group 0 -----> encoder channel 0 (global encChn 0) ( H264 SRTP Videostream )
+  * framesource.0 -----> ivs group 0 -----> encoder group 1 -----> encoder channel 0 (global encChn 1) ( H264 HKSV DVR )
+  *                 +--> exposure monitoring                  +--> encoder channel 1 (global encChn 2) ( JPEG ( Scale ) )
 */
 
 
@@ -62,6 +77,8 @@
 #include <sys/types.h>
 #include <unistd.h>
 #include <math.h>
+#include <pthread.h>
+#include <sys/prctl.h>
 
 #include <imp/imp_log.h>
 #include <imp/imp_common.h>
@@ -74,7 +91,7 @@
 
 #include <imp/imp_osd.h>
 
-#include "pwm.h"
+#include "ingenicPwm.h"
 
 #include <HAP.h>
 #include <HAP+Internal.h>
@@ -114,6 +131,7 @@ int sample_set_IRCUT(int enable)
 
 	int fd, fd1, fd2;
 	char on[4], off[4];
+    prctl(PR_SET_NAME, "set_ircut");
 
 	fd = open("/sys/class/gpio/export", O_WRONLY);
 	if(fd < 0) {
@@ -207,7 +225,7 @@ char *get_curr_timestr(char *buf) {
 static int  g_soft_ps_running = 1;
 //TODO: make the IRLED controllable by homekit switch
 static int ir_illumination = 0;		// use IR LEDs when dark
-static int force_color = 1;			// use color mode, even at night
+static int force_color = 0;			// use color mode, even at night
 static int flip_image = 0;			// flip 180deg for ceiling mounts
 
 // credit: https://raw.githubusercontent.com/geekman/t20-rtspd/master/imp-common.c
@@ -222,7 +240,9 @@ void *sample_soft_photosensitive_ctrl(void *p)
 	int expPos = 0;
 	IMPISPRunningMode pmode = IMPISP_RUNNING_MODE_BUTT;
 	int ir_leds_active = 0;
-	int r;
+	int r, ret;
+
+    prctl(PR_SET_NAME, "photosense");
 
 	// initialize PWM
 	struct pwm_ioctl_t pwm_cfg = {
@@ -246,11 +266,44 @@ void *sample_soft_photosensitive_ctrl(void *p)
 	sleep(2);	// wait a few for ISP to settle
 
 	while (g_soft_ps_running) {
+
+	//temporarily here since it isn't working in the init pipeline
+	// flip the image 180deg if requested
+	if (flip_image) {
+		ret = IMP_ISP_Tuning_SetISPHflip(IMPISP_TUNING_OPS_MODE_ENABLE);
+		if (ret < 0){
+			HAPLogError(&logObject,"failed to set horiz flip\n");
+		}
+		IMPISPTuningOpsMode pmode;
+		ret = IMP_ISP_Tuning_GetISPHflip(&pmode);
+		if (ret < 0){
+			HAPLogError(&logObject,"failed to get horiz flip\n");
+		}
+		if (pmode != IMPISP_TUNING_OPS_MODE_ENABLE){
+			HAPLogError(&logObject,"tried to horiz flip, but imp didn't take the change\n");
+
+		}
+
+		ret = IMP_ISP_Tuning_SetISPVflip(IMPISP_TUNING_OPS_MODE_ENABLE);
+		if (ret < 0){
+			HAPLogError(&logObject,"failed to set vert flip\n");
+		}
+		ret = IMP_ISP_Tuning_GetISPVflip(&pmode);
+		if (ret < 0){
+			HAPLogError(&logObject,"failed to get very flip\n");
+		}
+		if (pmode != IMPISP_TUNING_OPS_MODE_ENABLE){
+			HAPLogError(&logObject,"tried to vert flip, but imp didn't take the change\n");
+
+		}
+	}
+
+
 		IMPISPEVAttr expAttr;
 		int ret = IMP_ISP_Tuning_GetEVAttr(&expAttr);
 		if (ret == 0) {
 			if (evDebugCount > 0) {
-				HAPLogDebug(&logObject, "EV attr: exp %d aGain %d dGain %d\n",
+				HAPLogDebug(&logObject, "EV attr: exp %d aGain %d dGain %d",
 						expAttr.ev, expAttr.again, expAttr.dgain);
 				evDebugCount--;
 			}
@@ -287,7 +340,7 @@ void *sample_soft_photosensitive_ctrl(void *p)
 					i++, j = (j + 1) % NUM_EXP_VALUES)
 				longExpValue += (expValues[j] - longExpValue) / i;
 		}
-		HAPLogDebug(&logObject,"avgExp: %d, expPos: %d, longExpValue %d\n ", avgExp, expPos, longExpValue);
+		//HAPLogDebug(&logObject,"avgExp: %d, expPos: %d, longExpValue %d", avgExp, expPos, longExpValue);
 		// if the hysteresisCount is active, we skip any changes below
 		if (hysteresisCount > 0) {
 			hysteresisCount--;
@@ -300,7 +353,7 @@ void *sample_soft_photosensitive_ctrl(void *p)
 		if (avgExp > EXP_NIGHT_THRESHOLD) {
 			if (pmode != IMPISP_RUNNING_MODE_NIGHT) {
 				pmode = IMPISP_RUNNING_MODE_NIGHT;
-				HAPLogDebug(&logObject, "[%s] avg exp is %d. switching to night mode\n",
+				HAPLogDebug(&logObject, "[%s] avg exp is %d. switching to night mode",
 						get_curr_timestr((char *) &tmstr), avgExp);
 				evDebugCount = 10; // start logging 10s of EV data
 				hysteresisCount = 5;
@@ -309,7 +362,7 @@ void *sample_soft_photosensitive_ctrl(void *p)
 					IMP_ISP_Tuning_SetISPRunningMode(IMPISP_RUNNING_MODE_NIGHT);
 					IMP_ISP_Tuning_SetSensorFPS(SENSOR_FRAME_RATE_NUM_NIGHT, SENSOR_FRAME_RATE_DEN);
 				} else {
-					HAPLogDebug(&logObject, "[%s] force_color is on\n",
+					HAPLogDebug(&logObject, "[%s] force_color is on",
 						get_curr_timestr((char *) &tmstr));
 				}
 				sample_set_IRCUT(0);
@@ -317,7 +370,7 @@ void *sample_soft_photosensitive_ctrl(void *p)
 		} else if (avgExp < EXP_DAY_THRESHOLD) {
 			if (pmode != IMPISP_RUNNING_MODE_DAY) {
 				pmode = IMPISP_RUNNING_MODE_DAY;
-				HAPLogDebug(&logObject, "[%s] avg exp is %d. switching to day mode\n",
+				HAPLogDebug(&logObject, "[%s] avg exp is %d. switching to day mode",
 						get_curr_timestr((char *) &tmstr), avgExp);
 				evDebugCount = 10; // start logging 10s of EV data
 				hysteresisCount = 5;
@@ -334,7 +387,7 @@ void *sample_soft_photosensitive_ctrl(void *p)
 		if (avgExp > EXP_IR_THRESHOLD) {
 			// only log for first time
 			if (! ir_leds_active) {
-				HAPLogDebug(&logObject, "[%s] avg exp is %d. turning on IR LEDs\n",
+				HAPLogDebug(&logObject, "[%s] avg exp is %d. turning on IR LEDs",
 						get_curr_timestr((char *) &tmstr), avgExp);
 				evDebugCount = 10; // start logging 10s of EV data
 				hysteresisCount = 5;
@@ -354,7 +407,7 @@ void *sample_soft_photosensitive_ctrl(void *p)
 			if (ir_illumination) pwm_set_duty(pwm_cfg.channel, level);
 			ir_leds_active = 1;
 		} else if (ir_leds_active) {
-			HAPLogDebug(&logObject, "[%s] avg exp is %d. turning off IR LEDs\n",
+			HAPLogDebug(&logObject, "[%s] avg exp is %d. turning off IR LEDs",
 						get_curr_timestr((char *) &tmstr), avgExp);
 			evDebugCount = 10; // start logging 10s of EV data
 			hysteresisCount = 5;
@@ -372,44 +425,6 @@ end:
 
 
 
-static void *sample_ivs_move_get_result_process(void *arg)
-{
-	int i = 0, ret = 0;
-	int chn_num = (int)arg;
-	IMP_IVS_MoveOutput *result = NULL;
-
-	for (i = 0; true; i++) {
-		ret = IMP_IVS_PollingResult(chn_num, IMP_IVS_DEFAULT_TIMEOUTMS);
-		if (ret < 0) {
-			HAPLogError(&logObject, "IMP_IVS_PollingResult(%d, %d) failed\n", chn_num, IMP_IVS_DEFAULT_TIMEOUTMS);
-			return (void *)-1;
-		}
-		ret = IMP_IVS_GetResult(chn_num, (void **)&result);
-		if (ret < 0) {
-			HAPLogError(&logObject, "IMP_IVS_GetResult(%d) failed\n", chn_num);
-			return (void *)-1;
-		}
-		HAPLogDebug(&logObject,"frame[%d], result->retRoi(%d,%d,%d,%d)\n", i, result->retRoi[0], result->retRoi[1], result->retRoi[2], result->retRoi[3]);
-
-		ret = IMP_IVS_ReleaseResult(chn_num, (void *)result);
-		if (ret < 0) {
-			HAPLogError(&logObject, "IMP_IVS_ReleaseResult(%d) failed\n", chn_num);
-			return (void *)-1;
-		}
-#if 0
-		if (i % 20 == 0) {
-			ret = sample_ivs_set_sense(chn_num, i % 5);
-			if (ret < 0) {
-				HAPLogError(&logObject, "sample_ivs_set_sense(%d, %d) failed\n", chn_num, i % 5);
-				return (void *)-1;
-			}
-		}
-#endif
-	}
-
-	return (void *)0;
-}
-
 static int frmrate_sp[3] = { 0 };
 static int statime_sp[3] = { 0 };
 static int bitrate_sp[3] = { 0 };
@@ -425,9 +440,11 @@ static void *get_srtp_video_stream(void *args)
   chnNum = val & 0xffff;
   encType = (val >> 16) & 0xffff;
 
+  prctl(PR_SET_NAME, "srtp_video");
+
   ret = IMP_Encoder_StartRecvPic(chnNum);
   if (ret < 0) {
-    HAPLogError(&logObject, "IMP_Encoder_StartRecvPic(%d) failed\n", chnNum);
+    HAPLogError(&logObject, "IMP_Encoder_StartRecvPic(%d) failed", chnNum);
     return ((void *)-1);
   }
 
@@ -436,7 +453,7 @@ static void *get_srtp_video_stream(void *args)
   while(1){
     ret = IMP_Encoder_PollingStream(chnNum, 1000);
     if (ret < 0) {
-      HAPLogError(&logObject, "IMP_Encoder_PollingStream(%d) timeout\n", chnNum);
+      HAPLogError(&logObject, "IMP_Encoder_PollingStream(%d) timeout", chnNum);
       continue;
     }
 
@@ -444,7 +461,7 @@ static void *get_srtp_video_stream(void *args)
     /* Get H264 or H265 Stream */
     ret = IMP_Encoder_GetStream(chnNum, &stream, 1);
 	if (ret < 0) {
-      HAPLogError(&logObject, "IMP_Encoder_GetStream(%d) failed\n", chnNum);
+      HAPLogError(&logObject, "IMP_Encoder_GetStream(%d) failed", chnNum);
       return ((void *)-1);
     }
 
@@ -457,11 +474,11 @@ static void *get_srtp_video_stream(void *args)
     frmrate_sp[chnNum]++;
 
     int64_t now = IMP_System_GetTimeStamp() / 1000;
-    if(((int)(now - statime_sp[chnNum]) / 1000) >= 2){ // report bit rate every 2 seconds
+    if(((int)(now - statime_sp[chnNum]) / 1000) >= 10){ // report bit rate every 10 seconds
       double fps = (double)frmrate_sp[chnNum] / ((double)(now - statime_sp[chnNum]) / 1000);
       double kbr = (double)bitrate_sp[chnNum] * 8 / (double)(now - statime_sp[chnNum]);
 
-      HAPLogInfo(&logObject,"streamNum[%d]:FPS: %0.2f,Bitrate: %0.2f(kbps)\n", chnNum, fps, kbr);
+      HAPLogDebug(&logObject,"streamNum[%d]:FPS: %d,Bitrate: %d(kbps)",chnNum, (int)floor(fps),(int)floor(kbr) );
       
       frmrate_sp[chnNum] = 0;
       bitrate_sp[chnNum] = 0;
@@ -471,7 +488,7 @@ static void *get_srtp_video_stream(void *args)
 //TODO: for now just dump the data
 #if 0
     if (ret < 0) {
-      HAPLogError(&logObject, "IMP_Encoder_GetStream(%d) failed\n", chnNum);
+      HAPLogError(&logObject, "IMP_Encoder_GetStream(%d) failed", chnNum);
       return ((void *)-1);
     }
 
@@ -494,7 +511,7 @@ static void *get_srtp_video_stream(void *args)
 
   ret = IMP_Encoder_StopRecvPic(chnNum);
   if (ret < 0) {
-    HAPLogError(&logObject, "IMP_Encoder_StopRecvPic(%d) failed\n", chnNum);
+    HAPLogError(&logObject, "IMP_Encoder_StopRecvPic(%d) failed", chnNum);
     return ((void *)-1);
   }
 
@@ -514,9 +531,12 @@ static void *get_jpeg_stream(void *args)
   chnNum = val & 0xffff;
   encType = (val >> 16) & 0xffff;
 
+  prctl(PR_SET_NAME, "get_jpeg");
+
+
   ret = IMP_Encoder_StartRecvPic(chnNum);
   if (ret < 0) {
-    HAPLogError(&logObject, "IMP_Encoder_StartRecvPic(%d) failed\n", chnNum);
+    HAPLogError(&logObject, "IMP_Encoder_StartRecvPic(%d) failed", chnNum);
     return ((void *)-1);
   }
 
@@ -525,7 +545,7 @@ static void *get_jpeg_stream(void *args)
   while(1){
     ret = IMP_Encoder_PollingStream(chnNum, 5000);
     if (ret < 0) {
-      HAPLogError(&logObject, "IMP_Encoder_PollingStream(%d) timeout\n", chnNum);
+      HAPLogError(&logObject, "IMP_Encoder_PollingStream(%d) timeout", chnNum);
       continue;
     }
 
@@ -533,7 +553,7 @@ static void *get_jpeg_stream(void *args)
     /* Get H264 or H265 Stream */
     ret = IMP_Encoder_GetStream(chnNum, &stream, 1);
 	if (ret < 0) {
-      HAPLogError(&logObject, "IMP_Encoder_GetStream(%d) failed\n", chnNum);
+      HAPLogError(&logObject, "IMP_Encoder_GetStream(%d) failed", chnNum);
       return ((void *)-1);
     }
 
@@ -546,11 +566,11 @@ static void *get_jpeg_stream(void *args)
     frmrate_sp[chnNum]++;
 
     int64_t now = IMP_System_GetTimeStamp() / 1000;
-    if(((int)(now - statime_sp[chnNum]) / 1000) >= 2){ // report bit rate every 2 seconds
+    if(((int)(now - statime_sp[chnNum]) / 1000) >= 10){ // report bit rate every 10 seconds
       double fps = (double)frmrate_sp[chnNum] / ((double)(now - statime_sp[chnNum]) / 1000);
       double kbr = (double)bitrate_sp[chnNum] * 8 / (double)(now - statime_sp[chnNum]);
 
-      HAPLogDebug(&logObject,"streamNum[%d]:FPS: %0.2f,Bitrate: %0.2f(kbps)\n", chnNum, fps, kbr);
+      HAPLogDebug(&logObject,"streamNum[%d]:FPS: %d,Bitrate: %d(kbps)",chnNum, (int)floor(fps),(int)floor(kbr) );
       //fflush(stdout);
 
       frmrate_sp[chnNum] = 0;
@@ -560,42 +580,43 @@ static void *get_jpeg_stream(void *args)
 #endif
 	char * snap_path = "/tmp/snap.jpg";
 
-	HAPLogInfo(&logObject, "Locking snapshot mutex");
+//	HAPLogDebug(&logObject, "Locking snapshot mutex");
 	if ( pthread_mutex_lock(&snapshot_mutex) != 0){
-		HAPLogError(&logObject, "Locking snapshot mutex failed: %s\n", strerror(errno));
+		HAPLogError(&logObject, "Locking snapshot mutex failed: %s", strerror(errno));
 	}
 
-	HAPLogInfo(&logObject, "Open Snap file %s ", snap_path);
+
+	//TTTHAPLogDebug(&logObject, "Open Snap file %s ", snap_path);
 	int snap_fd = open(snap_path, O_RDWR | O_CREAT | O_TRUNC, 0777);
 	if (snap_fd < 0) {
-		HAPLogError(&logObject, "failed: %s\n", strerror(errno));
+		HAPLogError(&logObject, "failed: %s", strerror(errno));
 	}
 	else{
-		HAPLogInfo(&logObject, "OK\n");
+		//TTTHAPLogDebug(&logObject, "OK");
 
 		int ret, nr_pack = stream.packCount;
 
-		//HAPLogDebug(&logObject, "----------packCount=%d, stream.seq=%u start----------\n", stream.packCount, stream.seq);
+		// //TTTHAPLogDebug(&logObject, "----------packCount=%d, stream.seq=%u start----------", stream.packCount, stream.seq);
 		for (i = 0; i < nr_pack; i++) {
-		//HAPLogDebug(&logObject, "[%d]:%10u,%10lld,%10u,%10u,%10u\n", i, stream.pack[i].length, stream.pack[i].timestamp, stream.pack[i].frameEnd, *((uint32_t *)(&stream.pack[i].nalType)), stream.pack[i].sliceType);
+		// //TTTHAPLogDebug(&logObject, "[%d]:%10u,%10lld,%10u,%10u,%10u", i, stream.pack[i].length, stream.pack[i].timestamp, stream.pack[i].frameEnd, *((uint32_t *)(&stream.pack[i].nalType)), stream.pack[i].sliceType);
 			IMPEncoderPack *pack = &stream.pack[i];
 			if(pack->length){
 				uint32_t remSize = stream.streamSize - pack->offset;
 				if(remSize < pack->length){
 					ret = write(snap_fd, (void *)(stream.virAddr + pack->offset), remSize);
 					if (ret != remSize) {
-						HAPLogDebug(&logObject, "stream write ret(%d) != pack[%d].remSize(%d) error:%s\n", ret, i, remSize, strerror(errno));
+						//TTTHAPLogDebug(&logObject, "stream write ret(%d) != pack[%d].remSize(%d) error:%s", ret, i, remSize, strerror(errno));
 						// return -1;
 					}
 					ret = write(snap_fd, (void *)stream.virAddr, pack->length - remSize);
 					if (ret != (pack->length - remSize)) {
-						HAPLogDebug(&logObject, "stream write ret(%d) != pack[%d].(length-remSize)(%d) error:%s\n", ret, i, (pack->length - remSize), strerror(errno));
+						//TTTHAPLogDebug(&logObject, "stream write ret(%d) != pack[%d].(length-remSize)(%d) error:%s", ret, i, (pack->length - remSize), strerror(errno));
 						// return -1;
 					}
 				}else {
 					ret = write(snap_fd, (void *)(stream.virAddr + pack->offset), pack->length);
 					if (ret != pack->length) {
-						HAPLogDebug(&logObject, "stream write ret(%d) != pack[%d].length(%d) error:%s\n", ret, i, pack->length, strerror(errno));
+						//TTTHAPLogDebug(&logObject, "stream write ret(%d) != pack[%d].length(%d) error:%s", ret, i, pack->length, strerror(errno));
 						// return -1;
 					}
 				}
@@ -603,12 +624,12 @@ static void *get_jpeg_stream(void *args)
 		}
 		close(snap_fd);
 
-	//HAPLogDebug(&logObject, "----------packCount=%d, stream.seq=%u end----------\n", stream.packCount, stream.seq);
+	////TTTHAPLogDebug(&logObject, "----------packCount=%d, stream.seq=%u end----------", stream.packCount, stream.seq);
 	}
 
-	HAPLogInfo(&logObject, "Unlocking snapshot mutex");
+//	HAPLogDebug(&logObject, "Unlocking snapshot mutex");
 	if ( pthread_mutex_unlock(&snapshot_mutex) != 0){
-		HAPLogError(&logObject, "Unocking snapshot mutex failed: %s\n", strerror(errno));
+		HAPLogError(&logObject, "Unocking snapshot mutex failed: %s", strerror(errno));
 	}
 
     IMP_Encoder_ReleaseStream(chnNum, &stream);
@@ -616,7 +637,7 @@ static void *get_jpeg_stream(void *args)
 
   ret = IMP_Encoder_StopRecvPic(chnNum);
   if (ret < 0) {
-    HAPLogError(&logObject, "IMP_Encoder_StopRecvPic(%d) failed\n", chnNum);
+    HAPLogError(&logObject, "IMP_Encoder_StopRecvPic(%d) failed", chnNum);
     return ((void *)-1);
   }
 
@@ -627,6 +648,7 @@ static void *get_jpeg_stream(void *args)
 extern int IMP_OSD_SetPoolSize(int size);
 //extern int IMP_Encoder_SetPoolSize(int size);
 
+extern void *sample_ivs_move_get_result_process(void *arg);
 
 int initVideoPipeline(){
 
@@ -636,16 +658,16 @@ int initVideoPipeline(){
 	IMP_OSD_SetPoolSize(512*1024);
 	IMP_Log_Set_Option(IMP_LOG_OP_ALL);
 
-	HAPLogInfo(&logObject, "initVideoPipeline start\n");
+	HAPLogInfo(&logObject, "initVideoPipeline start");
 
 
 	ret = IMP_ISP_Open();
 	if(ret < 0){
-		HAPLogError(&logObject,"failed to open ISP\n");
+		HAPLogError(&logObject,"failed to open ISP");
 		return -1;
 	}
 	
-	HAPLogDebug(&logObject, "IMP_System_Init Finish. \n");
+	HAPLogDebug(&logObject, "IMP_System_Init Finish. ");
 
 	memset(&sensor_info, 0, sizeof(IMPSensorInfo));
 	memcpy(sensor_info.name, SENSOR_NAME, sizeof(SENSOR_NAME));
@@ -653,60 +675,62 @@ int initVideoPipeline(){
 	memcpy(sensor_info.i2c.type, SENSOR_NAME, sizeof(SENSOR_NAME));
 	sensor_info.i2c.addr = SENSOR_I2C_ADDR;
 
-	HAPLogDebug(&logObject, "IMP_ISP_AddSensor start\n");
+	HAPLogDebug(&logObject, "IMP_ISP_AddSensor start");
 	ret = IMP_ISP_AddSensor(&sensor_info);
 	if(ret < 0){
-		HAPLogError(&logObject,"failed to AddSensor\n");
+		HAPLogError(&logObject,"failed to AddSensor");
 		return -1;
 	}
 
-	HAPLogDebug(&logObject, "IMP_ISP_EnableSensor start\n");
+	HAPLogDebug(&logObject, "IMP_ISP_EnableSensor start");
 	ret = IMP_ISP_EnableSensor();
 	if(ret < 0){
-		HAPLogError(&logObject,"failed to EnableSensor\n");
+		HAPLogError(&logObject,"failed to EnableSensor");
 		return -1;
 	}
 
-	HAPLogDebug(&logObject, "IMP_System_Init start\n");
+	HAPLogDebug(&logObject, "IMP_System_Init start");
 	ret = IMP_System_Init();
 	if(ret < 0){
-		HAPLogError(&logObject,"IMP_System_Init failed\n");
+		HAPLogError(&logObject,"IMP_System_Init failed");
 		return -1;
 	}
 
 
-	HAPLogDebug(&logObject, "IMP_ISP_EnableTuning start\n");
+	HAPLogDebug(&logObject, "IMP_ISP_EnableTuning start");
 #if 1
 
 	/* enable turning, to debug graphics */
 	ret = IMP_ISP_EnableTuning();
 	if(ret < 0){
-		HAPLogError(&logObject,"IMP_ISP_EnableTuning failed\n");
+		HAPLogError(&logObject,"IMP_ISP_EnableTuning failed");
 		return -1;
 	}
 #endif
-#if 1
+#if 0
     IMP_ISP_Tuning_SetContrast(128);
     IMP_ISP_Tuning_SetSharpness(128);
     IMP_ISP_Tuning_SetSaturation(128);
     IMP_ISP_Tuning_SetBrightness(128);
 #endif
+
+
 #if 1
-	HAPLogDebug(&logObject, "IMP_ISP_Tuning_SetISPRunningMode start\n");
+	HAPLogDebug(&logObject, "IMP_ISP_Tuning_SetISPRunningMode start");
     ret = IMP_ISP_Tuning_SetISPRunningMode(IMPISP_RUNNING_MODE_DAY);
     if (ret < 0){
-        HAPLogError(&logObject,"failed to set running mode\n");
+        HAPLogError(&logObject,"failed to set running mode");
         return -1;
     }
 #endif
 #if 1
     ret = IMP_ISP_Tuning_SetSensorFPS(SENSOR_FRAME_RATE_NUM, SENSOR_FRAME_RATE_DEN);
     if (ret < 0){
-        HAPLogError(&logObject,"failed to set sensor fps\n");
+        HAPLogError(&logObject,"failed to set sensor fps");
         return -1;
     }
 #endif
-	HAPLogDebug(&logObject, "ImpSystemInit success\n");
+	HAPLogDebug(&logObject, "ImpSystemInit success");
 
 
 	IMPFSChnAttr fs0_chn_attr = {
@@ -730,16 +754,16 @@ int initVideoPipeline(){
 				.picHeight = SENSOR_HEIGHT,
 			};
 
-	HAPLogDebug(&logObject, "Setting up Framesource 0 \n");
+	HAPLogDebug(&logObject, "Setting up Framesource 0 ");
 	ret = IMP_FrameSource_CreateChn(0 /*index*/, &fs0_chn_attr);
 	if(ret < 0){
-		HAPLogError(&logObject,"IMP_FrameSource_CreateChn(chn%d) error !\n", 0);
+		HAPLogError(&logObject,"IMP_FrameSource_CreateChn(chn%d) error !", 0);
 		return -1;
 	}
 
 	ret = IMP_FrameSource_SetChnAttr(0 /*index*/, &fs0_chn_attr);
 	if (ret < 0) {
-		HAPLogError(&logObject,"IMP_FrameSource_SetChnAttr(chn%d) error !\n",  0);
+		HAPLogError(&logObject,"IMP_FrameSource_SetChnAttr(chn%d) error !",  0);
 		return -1;
 	}
 
@@ -765,24 +789,55 @@ int initVideoPipeline(){
 				.picHeight = SENSOR_HEIGHT,
 			};
 			
-	HAPLogDebug(&logObject, "Setting up Framesource 1 \n");
+	HAPLogDebug(&logObject, "Setting up Framesource 1 ");
 	ret = IMP_FrameSource_CreateChn(1 /*index*/, &fs1_chn_attr);
 	if(ret < 0){
-		HAPLogError(&logObject,"IMP_FrameSource_CreateChn(chn%d) error !\n", 1);
+		HAPLogError(&logObject,"IMP_FrameSource_CreateChn(chn%d) error !", 1);
 		return -1;
 	}
 
 	ret = IMP_FrameSource_SetChnAttr(1 /*index*/, &fs1_chn_attr);
 	if (ret < 0) {
-		HAPLogError(&logObject,"IMP_FrameSource_SetChnAttr(chn%d) error !\n",  1);
+		HAPLogError(&logObject,"IMP_FrameSource_SetChnAttr(chn%d) error !",  1);
 		return -1;
 	}
 #endif
-	HAPLogDebug(&logObject, "Setting up encoder group 0 \n");
+
+	// flip the image 180deg if requested
+	if (flip_image) {
+		ret = IMP_ISP_Tuning_SetISPHflip(IMPISP_TUNING_OPS_MODE_ENABLE);
+		if (ret < 0){
+			HAPLogError(&logObject,"failed to set horiz flip\n");
+		}
+		IMPISPTuningOpsMode pmode;
+		ret = IMP_ISP_Tuning_GetISPHflip(&pmode);
+		if (ret < 0){
+			HAPLogError(&logObject,"failed to get horiz flip\n");
+		}
+		if (pmode != IMPISP_TUNING_OPS_MODE_ENABLE){
+			HAPLogError(&logObject,"tried to horiz flip, but imp didn't take the change\n");
+
+		}
+
+		ret = IMP_ISP_Tuning_SetISPVflip(IMPISP_TUNING_OPS_MODE_ENABLE);
+		if (ret < 0){
+			HAPLogError(&logObject,"failed to set vert flip\n");
+		}
+		ret = IMP_ISP_Tuning_GetISPVflip(&pmode);
+		if (ret < 0){
+			HAPLogError(&logObject,"failed to get very flip\n");
+		}
+		if (pmode != IMPISP_TUNING_OPS_MODE_ENABLE){
+			HAPLogError(&logObject,"tried to vert flip, but imp didn't take the change\n");
+
+		}
+	}
+
+	HAPLogDebug(&logObject, "Setting up encoder group 0 ");
 
 	ret = IMP_Encoder_CreateGroup( 0 /* index*/ );
 	if (ret < 0) {
-		HAPLogError(&logObject,"IMP_Encoder_CreateGroup(%d) error !\n", 0);
+		HAPLogError(&logObject,"IMP_Encoder_CreateGroup(%d) error !", 0);
 		return -1;
 	}
 
@@ -791,7 +846,7 @@ int initVideoPipeline(){
 	//TODO: experiment with different encoder rc modes
  	static const IMPEncoderRcMode S_RC_METHOD = IMP_ENC_RC_MODE_CBR; //IMP_ENC_RC_MODE_CAPPED_VBR; //IMP_ENC_RC_MODE_FIXQP; //IMP_ENC_RC_MODE_CAPPED_QUALITY;
 
-	ret = IMP_Encoder_SetDefaultParam(&enc0_channel0_attr, IMP_ENC_PROFILE_HEVC_MAIN, S_RC_METHOD,
+	ret = IMP_Encoder_SetDefaultParam(&enc0_channel0_attr, IMP_ENC_PROFILE_AVC_MAIN, S_RC_METHOD,
 			SENSOR_WIDTH, SENSOR_HEIGHT,
 			SENSOR_FRAME_RATE_NUM, SENSOR_FRAME_RATE_DEN,
 			SENSOR_FRAME_RATE_NUM * 2 / SENSOR_FRAME_RATE_DEN, // GOP length (2 secc)
@@ -799,35 +854,35 @@ int initVideoPipeline(){
 			(S_RC_METHOD == IMP_ENC_RC_MODE_FIXQP) ? 35 : -1, // iInitialQP
 			1000); // uTargetBitRate
 	if (ret < 0) {
-		HAPLogError(&logObject,"IMP_Encoder_SetDefaultParam(%d) error !\n", 0);
+		HAPLogError(&logObject,"IMP_Encoder_SetDefaultParam(%d) error !", 0);
 		return -1;
 	}
 
 	ret = IMP_Encoder_CreateChn(/*encChn*/ 0, &enc0_channel0_attr);
 	if (ret < 0) {
-		HAPLogError(&logObject,"IMP_Encoder_CreateChn(%d) error !\n", 0);
+		HAPLogError(&logObject,"IMP_Encoder_CreateChn(%d) error !", 0);
 		return -1;
 	}
 
 	ret = IMP_Encoder_RegisterChn(0 /* encGroup */, 0 /* encChn */);
 	if (ret < 0) {
-		HAPLogError(&logObject,"IMP_Encoder_RegisterChn(%d, %d) error: %d\n", 0, 0, ret);
+		HAPLogError(&logObject,"IMP_Encoder_RegisterChn(%d, %d) error: %d", 0, 0, ret);
 		return -1;
 	}
 
 
-	HAPLogDebug(&logObject, "Setting up encoder group 1: h264 \n");
+	HAPLogDebug(&logObject, "Setting up encoder group 1: h264 ");
 
 #if 1
 	ret = IMP_Encoder_CreateGroup( 1 /* index*/ );
 	if (ret < 0) {
-		HAPLogError(&logObject,"IMP_Encoder_CreateGroup(%d) error !\n", 1);
+		HAPLogError(&logObject,"IMP_Encoder_CreateGroup(%d) error !", 1);
 		return -1;
 	}
 
 	IMPEncoderChnAttr enc1_channel0_attr;
 
-	ret = IMP_Encoder_SetDefaultParam(&enc1_channel0_attr, IMP_ENC_PROFILE_HEVC_MAIN, S_RC_METHOD,
+	ret = IMP_Encoder_SetDefaultParam(&enc1_channel0_attr, IMP_ENC_PROFILE_AVC_MAIN, S_RC_METHOD,
 			SENSOR_WIDTH, SENSOR_HEIGHT,
 			SENSOR_FRAME_RATE_NUM, SENSOR_FRAME_RATE_DEN,
 			SENSOR_FRAME_RATE_NUM * 2 / SENSOR_FRAME_RATE_DEN, // GOP length (2 sec)
@@ -835,24 +890,24 @@ int initVideoPipeline(){
 			(S_RC_METHOD == IMP_ENC_RC_MODE_FIXQP) ? 35 : -1, // iInitialQP
 			1000 ); // uTargetBitRate
 	if (ret < 0) {
-		HAPLogError(&logObject,"IMP_Encoder_SetDefaultParam(%d) error !\n", 1);
+		HAPLogError(&logObject,"IMP_Encoder_SetDefaultParam(%d) error !", 1);
 		return -1;
 	}
 
 	ret = IMP_Encoder_CreateChn(/*encChn*/ 1, &enc1_channel0_attr);
 	if (ret < 0) {
-		HAPLogError(&logObject,"IMP_Encoder_CreateChn(%d) error !\n", 1);
+		HAPLogError(&logObject,"IMP_Encoder_CreateChn(%d) error !", 1);
 		return -1;
 	}
 
  	ret = IMP_Encoder_RegisterChn( 1 /* encGroup */, 1 /* encChn */);
 	if (ret < 0) {
-		HAPLogError(&logObject,"IMP_Encoder_RegisterChn(%d, %d) error: %d\n", 1, 1, ret);
+		HAPLogError(&logObject,"IMP_Encoder_RegisterChn(%d, %d) error: %d", 1, 1, ret);
 		return -1;
 	}
 
 
-	HAPLogDebug(&logObject, "Setting up encoder group 2: jpeg \n");
+	HAPLogDebug(&logObject, "Setting up encoder group 2: jpeg ");
 
 	IMPEncoderChnAttr enc1_channel1_attr;
 
@@ -860,94 +915,96 @@ int initVideoPipeline(){
 	#define JPEG_FRAME_RATE_DEN 1
 
 	ret = IMP_Encoder_SetDefaultParam(&enc1_channel1_attr, IMP_ENC_PROFILE_JPEG, IMP_ENC_RC_MODE_FIXQP,
-			640, 480, // SENSOR_WIDTH, SENSOR_HEIGHT,
+			640, 360, // SENSOR_WIDTH, SENSOR_HEIGHT,
 			JPEG_FRAME_RATE_NUM, JPEG_FRAME_RATE_DEN,
 			0, 0, 25, 0);
 
 	if (ret < 0) {
-		HAPLogError(&logObject,"IMP_Encoder_SetDefaultParam(%d) error !\n", 2);
+		HAPLogError(&logObject,"IMP_Encoder_SetDefaultParam(%d) error !", 2);
 		return -1;
 	}
 
 	ret = IMP_Encoder_CreateChn(/*encChn*/ 2, &enc1_channel1_attr);
 	if (ret < 0) {
-		HAPLogError(&logObject,"IMP_Encoder_CreateChn(%d) error !\n", 2);
+		HAPLogError(&logObject,"IMP_Encoder_CreateChn(%d) error !", 2);
 		return -1;
 	}
 
 	ret = IMP_Encoder_RegisterChn( 1 /* encGroup */, 2 /* encChn */);
 	if (ret < 0) {
-		HAPLogError(&logObject,"IMP_Encoder_RegisterChn(%d, %d) error: %d\n", 1, 2, ret);
+		HAPLogError(&logObject,"IMP_Encoder_RegisterChn(%d, %d) error: %d", 1, 2, ret);
 		return -1;
 	}
 
-	HAPLogDebug(&logObject, "Setting up motion detection \n");
+	HAPLogDebug(&logObject, "Setting up motion detection ");
 
 	ret = IMP_IVS_CreateGroup(0);
 	if (ret < 0) {
-		HAPLogError(&logObject,"IMP_IVS_CreateGroup(%d) failed\n", 0);
+		HAPLogError(&logObject,"IMP_IVS_CreateGroup(%d) failed", 0);
 		return -1;
 	}
 #endif
 
-	HAPLogDebug(&logObject, "Binding video path for SRTP \n");
+	HAPLogDebug(&logObject, "Binding video path for SRTP ");
 
 	IMPCell	framesource0_chn =	{ DEV_ID_FS, 0, 0};
 	IMPCell imp_encoder0 = { DEV_ID_ENC, 0, 0};
-	
-	ret = IMP_System_Bind(&framesource0_chn, &imp_encoder0);
-	if (ret < 0) {
-		HAPLogError(&logObject,"Bind FrameSource channel.0 output.0 and encoder0 failed\n");
-		return -1;
-	}
-#if 1
-
 
 	IMPCell	framesource1_chn =	{ DEV_ID_FS, 1, 0};
 	IMPCell ivs_cell = {DEV_ID_IVS, 0, 0};
 
-	HAPLogDebug(&logObject, "Binding video path for motion \n");
-	ret = IMP_System_Bind(&framesource1_chn, &ivs_cell);
+	ret = IMP_System_Bind(&framesource1_chn, &imp_encoder0);
 	if (ret < 0) {
-		HAPLogError(&logObject,"Bind FrameSource channel.1 output.0 and ivs0 failed\n");
+		HAPLogError(&logObject,"Bind FrameSource channel.0 output.0 and encoder0 failed");
+		return -1;
+	}
+#if 1
+
+	HAPLogDebug(&logObject, "Binding video path for motion ");
+	ret = IMP_System_Bind(&framesource0_chn, &ivs_cell);
+	if (ret < 0) {
+		HAPLogError(&logObject,"Bind FrameSource channel.1 output.0 and ivs0 failed");
 		return -1;
 	}
 	IMPCell imp_encoder1 = { DEV_ID_ENC, 1, 0};
-	HAPLogDebug(&logObject, "Binding video path for HKSV\n");
+	HAPLogDebug(&logObject, "Binding video path for HKSV");
 	ret = IMP_System_Bind(&ivs_cell, &imp_encoder1);
 	if (ret < 0) {
-		HAPLogError(&logObject,"Bind ivs0 channel%d and encoder1 failed\n",0);
+		HAPLogError(&logObject,"Bind ivs0 channel%d and encoder1 failed",0);
 		return -1;
 	}
 
 	// Do I need to bind the jpeg encoder??
 	// I don't think so, sample-Encoder-h264-jpeg.c line 79 only binds the h264+jpeg encoding group, not the jpeg encoder
 	// IMPCell imp_encoder2 = { DEV_ID_ENC, 2, 0};
-	// HAPLogDebug(&logObject, "Binding video path for JPEG \n");
+	// HAPLogDebug(&logObject, "Binding video path for JPEG ");
 	// ret = IMP_System_Bind(&ivs_cell, &imp_encoder2);
 	// if (ret < 0) {
-	// 	HAPLogError(&logObject,"Bind ivs0 channel%d and encoder2 failed\n",0);
+	// 	HAPLogError(&logObject,"Bind ivs0 channel%d and encoder2 failed",0);
 	// 	return -1;
 	// }
 
 #endif
-	HAPLogDebug(&logObject, "Starting Frame Sources \n");
+	HAPLogDebug(&logObject, "Starting Frame Sources ");
+
+//	moving this to POSCameraController
+
+//	ret = IMP_FrameSource_EnableChn(1);
+//	if (ret < 0) {
+//		HAPLogError(&logObject,"IMP_FrameSource_EnableChn(%d) error: %d", 0, ret);
+//		return -1;
+//	}
+
+#if 1
 
 	ret = IMP_FrameSource_EnableChn(0);
 	if (ret < 0) {
-		HAPLogError(&logObject,"IMP_FrameSource_EnableChn(%d) error: %d\n", 0, ret);
-		return -1;
-	}
-#if 1
-
-	ret = IMP_FrameSource_EnableChn(1);
-	if (ret < 0) {
-		HAPLogError(&logObject,"IMP_FrameSource_EnableChn(%d) error: %d\n", 1, ret);
+		HAPLogError(&logObject,"IMP_FrameSource_EnableChn(%d) error: %d", 1, ret);
 		return -1;
 	}
 #endif
 
-	HAPLogDebug(&logObject, "Starting motion sensing \n");
+	HAPLogDebug(&logObject, "Starting motion sensing ");
 
 	IMP_IVS_MoveParam ivs_param;
 	IMPIVSInterface *ivs_interface = NULL;
@@ -957,23 +1014,24 @@ int initVideoPipeline(){
 	ivs_param.skipFrameCnt = 5;
 	ivs_param.frameInfo.width = SENSOR_WIDTH;
 	ivs_param.frameInfo.height = SENSOR_HEIGHT;
-	ivs_param.roiRectCnt = 4;
+	ivs_param.roiRectCnt = 1;
 
-	//TODO: something to do with sensitivity?
+	// TODO: experiment with sensitivity?
+	// The sensitivity of motion detection is 0-4 for normal cameras
 	for(i=0; i<ivs_param.roiRectCnt; i++){
-	  ivs_param.sense[i] = 4;
+	  ivs_param.sense[i] = 2;
 	}
 
-	/* HAPLogInfo(&logObject,"ivs_param.sense=%d, ivs_param.skipFrameCnt=%d, ivs_param.frameInfo.width=%d, ivs_param.frameInfo.height=%d\n", ivs_param.sense, ivs_param.skipFrameCnt, ivs_param.frameInfo.width, ivs_param.frameInfo.height); */
+	/* HAPLogDebug(&logObject,"ivs_param.sense=%d, ivs_param.skipFrameCnt=%d, ivs_param.frameInfo.width=%d, ivs_param.frameInfo.height=%d", ivs_param.sense, ivs_param.skipFrameCnt, ivs_param.frameInfo.width, ivs_param.frameInfo.height); */
 	//TODO: setup regions of interest
-	for (j = 0; j < 2; j++) {
-		for (i = 0; i < 2; i++) {
+	for (j = 0; j < 1/*2*/; j++) {
+		for (i = 0; i < 1/*2*/; i++) {
 		  if((i==0)&&(j==0)){
 			ivs_param.roiRect[j * 2 + i].p0.x = i * ivs_param.frameInfo.width /* / 2 */;
 			ivs_param.roiRect[j * 2 + i].p0.y = j * ivs_param.frameInfo.height /* / 2 */;
 			ivs_param.roiRect[j * 2 + i].p1.x = (i + 1) * ivs_param.frameInfo.width /* / 2 */ - 1;
 			ivs_param.roiRect[j * 2 + i].p1.y = (j + 1) * ivs_param.frameInfo.height /* / 2 */ - 1;
-			HAPLogDebug(&logObject,"(%d,%d) = ((%d,%d)-(%d,%d))\n", i, j, ivs_param.roiRect[j * 2 + i].p0.x, ivs_param.roiRect[j * 2 + i].p0.y,ivs_param.roiRect[j * 2 + i].p1.x, ivs_param.roiRect[j * 2 + i].p1.y);
+			HAPLogDebug(&logObject,"(%d,%d) = ((%d,%d)-(%d,%d))", i, j, ivs_param.roiRect[j * 2 + i].p0.x, ivs_param.roiRect[j * 2 + i].p0.y,ivs_param.roiRect[j * 2 + i].p1.x, ivs_param.roiRect[j * 2 + i].p1.y);
 		  }
 		  else
 		    {
@@ -981,74 +1039,78 @@ int initVideoPipeline(){
 			ivs_param.roiRect[j * 2 + i].p0.y = 0;//ivs_param.roiRect[0].p0.y;
 			ivs_param.roiRect[j * 2 + i].p1.x = 0;//ivs_param.roiRect[0].p1.x;;
 			ivs_param.roiRect[j * 2 + i].p1.y = 0;//ivs_param.roiRect[0].p1.y;;
-			HAPLogDebug(&logObject,"(%d,%d) = ((%d,%d)-(%d,%d))\n", i, j, ivs_param.roiRect[j * 2 + i].p0.x, ivs_param.roiRect[j * 2 + i].p0.y,ivs_param.roiRect[j * 2 + i].p1.x, ivs_param.roiRect[j * 2 + i].p1.y);
+			HAPLogDebug(&logObject,"(%d,%d) = ((%d,%d)-(%d,%d))", i, j, ivs_param.roiRect[j * 2 + i].p0.x, ivs_param.roiRect[j * 2 + i].p0.y,ivs_param.roiRect[j * 2 + i].p1.x, ivs_param.roiRect[j * 2 + i].p1.y);
 		    }
 		}
 	}
 	ivs_interface = IMP_IVS_CreateMoveInterface(&ivs_param);
 	if (ivs_interface == NULL) {
-		HAPLogError(&logObject, "IMP_IVS_CreateGroup(%d) failed\n", /*grp_num*/ 0);
+		HAPLogError(&logObject, "IMP_IVS_CreateGroup(%d) failed", /*grp_num*/ 0);
 		return -1;
 	}
 
 	ret = IMP_IVS_CreateChn(/*chn_num*/ 2, ivs_interface);
 	if (ret < 0) {
-		HAPLogError(&logObject, "IMP_IVS_CreateChn(%d) failed\n", /*chn_num*/ 2);
+		HAPLogError(&logObject, "IMP_IVS_CreateChn(%d) failed", /*chn_num*/ 2);
 		return -1;
 	}
 
-	ret = IMP_IVS_RegisterChn(/*grp_num*/ 0, /*chn_num*/ 2);
+	ret = IMP_IVS_RegisterChn(/*ivs grp_num*/ 0, /*chn_num*/ 2);
 	if (ret < 0) {
-		HAPLogError(&logObject, "IMP_IVS_RegisterChn(%d, %d) failed\n", /*grp_num*/ 0, /*chn_num*/ 2);
+		HAPLogError(&logObject, "IMP_IVS_RegisterChn(%d, %d) failed", /*grp_num*/ 0, /*chn_num*/ 2);
 		return -1;
 	}
 
 	ret = IMP_IVS_StartRecvPic(/*chn_num*/ 2);
 	if (ret < 0) {
-		HAPLogError(&logObject, "IMP_IVS_StartRecvPic(%d) failed\n", /*chn_num*/ 2);
+		HAPLogError(&logObject, "IMP_IVS_StartRecvPic(%d) failed", /*chn_num*/ 2);
 		return -1;
 	}
 	
 	pthread_t ivs_tid;
 
-	HAPLogDebug(&logObject, "Starting motion sensing thread \n");
+	HAPLogInfo(&logObject, "Starting motion sensing thread ");
 	if (pthread_create(&ivs_tid, NULL, sample_ivs_move_get_result_process, (void *) /*chn_num*/ 2) < 0) {
-		HAPLogError(&logObject, "create sample_ivs_move_get_result_process failed\n");
+		HAPLogError(&logObject, "create sample_ivs_move_get_result_process failed");
 		return -1;
 	}
 
 	int arg;
-	pthread_t srtp_tid;
 
-	HAPLogDebug(&logObject, "Starting srtp capture thread \n");
-	arg = (((IMP_ENC_PROFILE_AVC_MAIN >> 24) << 16) | (/*chn_num*/ 0));
-	ret = pthread_create(&srtp_tid, NULL, get_srtp_video_stream, (void *)arg);
-	if (ret < 0) {
-		HAPLogError(&logObject, "Create ChnNum%d get_srtp_video_stream failed\n", (/*chn_num*/ 0 ));
-	}
+//	moving this to POSCameraController
+//
+//	pthread_t srtp_tid;
+//
+//	HAPLogInfo(&logObject, "Starting srtp capture thread ");
+//	arg = (((IMP_ENC_PROFILE_AVC_MAIN >> 24) << 16) | (/*chn_num*/ 0));
+//	ret = pthread_create(&srtp_tid, NULL, get_srtp_video_stream, (void *)arg);
+//	if (ret < 0) {
+//		HAPLogError(&logObject, "Create ChnNum%d get_srtp_video_stream failed", (/*chn_num*/ 0 ));
+//	}
 
 	pthread_t hksv_tid;
 
-	HAPLogDebug(&logObject, "Starting hksv capture thread \n");
+	HAPLogInfo(&logObject, "Starting hksv capture thread ");
 	arg = (((IMP_ENC_PROFILE_AVC_MAIN >> 24) << 16) | (/*chn_num*/ 1));
 	// TODO: in the future, change this to a hskv specific processing thread
 	ret = pthread_create(&hksv_tid, NULL, get_srtp_video_stream, (void *)arg);
 	if (ret < 0) {
-		HAPLogError(&logObject, "Create ChnNum%d get_srtp_video_stream failed\n", (/*chn_num*/ 1 ));
+		HAPLogError(&logObject, "Create ChnNum%d get_srtp_video_stream failed", (/*chn_num*/ 1 ));
 	}
 
 	pthread_t jpeg_tid;
 
-	HAPLogDebug(&logObject, "Starting jpeg capture thread \n");
+	HAPLogInfo(&logObject, "Starting jpeg capture thread ");
 	arg = (((IMP_ENC_PROFILE_AVC_MAIN >> 24) << 16) | (/*chn_num*/ 2));
 	// TODO: in the future, change this to a jpeg specific processing thread
 	ret = pthread_create(&jpeg_tid, NULL, get_jpeg_stream, (void *)arg);
 	if (ret < 0) {
-		HAPLogError(&logObject, "Create ChnNum%d get_srtp_video_stream failed\n", (/*chn_num*/ 2 ));
+		HAPLogError(&logObject, "Create ChnNum%d get_srtp_video_stream failed", (/*chn_num*/ 2 ));
 	}
 
 
 	// start thread for activating night mode & IR cut filter
+	HAPLogInfo(&logObject, "Starting thread for activating night mode & IR cut filter ");
 	pthread_t thread_info;
 	pthread_create(&thread_info, NULL, sample_soft_photosensitive_ctrl, NULL);
 	if (ret < 0) {
