@@ -707,7 +707,7 @@ void POSRTPStreamPushPacket(POSRTPStreamRef *stream, void *bytes, size_t numPack
         HAPLogError(&logObject,"SRTCP input authentication failed");
         return;
       }
-      HAPLogDebug(&logObject,"SRTCP input authentication success");
+      //HAPLogDebug(&logObject,"SRTCP input authentication success");
 
       // replay protection as defined in https://datatracker.ietf.org/doc/html/rfc2401#page-1-58
       uint32_t index = recIndex & 0x7fffffff; // most significant bit indicates whether the payload is encrypted
@@ -1166,8 +1166,7 @@ void POSRTPStreamCheckFeedback(POSRTPStreamRef *stream, HAPTime actualTime, void
     //haven't sent a message in 2 reports, we're now sending a receiver report
     payloadType = 201;
   }
-  printf("payloadType: %d\n", payloadType);
-
+  
   uint8_t *ptrNextReport = (uint8_t *)bytes;
 
   *(uint8_t *)(ptrNextReport + 0) = (deltaSinceLastRecvReport != 0) + 0x80;
