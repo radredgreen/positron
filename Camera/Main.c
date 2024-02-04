@@ -22,6 +22,11 @@
 #include "HAPPlatformServiceDiscovery+Init.h"
 #include "HAPPlatformTCPStreamManager+Init.h"
 #endif
+#include <stdio.h>
+#include <string.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <fcntl.h>
 
 #include <signal.h>
 static bool requestedFactoryReset = false;
@@ -286,6 +291,21 @@ static void InitializeBLE() {
 
 int main(int argc HAP_UNUSED, char* _Nullable argv[_Nullable] HAP_UNUSED) {
     HAPAssert(HAPGetCompatibilityVersion() == HAP_COMPATIBILITY_VERSION);
+    if(argc == 2){
+        if(strcmp(argv[1],"-s")==0){
+            int out = open("/tmp/positron.log", O_RDWR|O_CREAT|O_APPEND, 0600);
+            if (-1 == out) { perror("opening /tmp/positron.log"); return 255; }
+
+            int err = open("/tmp/positron.log", O_RDWR|O_CREAT|O_APPEND, 0600);
+            if (-1 == err) { perror("opening /tmp/positron.log"); return 255; }
+
+            int save_out = dup(fileno(stdout));
+            int save_err = dup(fileno(stderr));
+
+            if (-1 == dup2(out, fileno(stdout))) { perror("cannot redirect stdout"); return 255; }
+            if (-1 == dup2(err, fileno(stderr))) { perror("cannot redirect stderr"); return 255; }
+        }
+    }
 
     // Initialize global platform objects.
     InitializePlatform();
