@@ -117,7 +117,8 @@ static const HAPLogObject logObject = { .subsystem = kHAP_LogSubsystem, .categor
 
 //for gc2053
 #define EXP_NIGHT_THRESHOLD 30000 
-#define EXP_DAY_THRESHOLD 5900 
+#define EXP_DAY_THRESHOLD 600 //5900 
+#define EXP_IR_OFF_THRESHOLD 600
 #define EXP_IR_THRESHOLD 30000
 
 #define STRINGIFY__(a) #a
@@ -225,7 +226,7 @@ char *get_curr_timestr(char *buf) {
 static int  g_soft_ps_running = 1;
 //TODO: make the IRLED controllable by homekit switch
 static int ir_illumination = 0;		// use IR LEDs when dark
-static int force_color = 1;			// use color mode, even at night
+static int force_color = 0;			// use color mode, even at night
 static int flip_image = 0;			// flip 180deg for ceiling mounts
 
 // credit: https://raw.githubusercontent.com/geekman/t20-rtspd/master/imp-common.c
@@ -406,7 +407,7 @@ void *sample_soft_photosensitive_ctrl(void *p)
 
 			if (ir_illumination) pwm_set_duty(pwm_cfg.channel, level);
 			ir_leds_active = 1;
-		} else if (ir_leds_active) {
+		} else if (ir_leds_active && avgExp < EXP_IR_OFF_THRESHOLD) {
 			HAPLogDebug(&logObject, "[%s] avg exp is %d. turning off IR LEDs",
 						get_curr_timestr((char *) &tmstr), avgExp);
 			evDebugCount = 10; // start logging 10s of EV data

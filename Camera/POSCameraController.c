@@ -54,6 +54,8 @@
 
 #include "POSRingBuffer.h"
 
+//#define MUTE_ALL_SOUND
+
 extern AccessoryConfiguration accessoryConfiguration;
 
 static const HAPLogObject logObject = {.subsystem = kHAP_LogSubsystem, .category = "POSCameraController"};
@@ -522,7 +524,8 @@ static void *srtp_audio_feedback(void *context)
   
   // trial and error 
   // stream info: channel = 1	sample_rate = 16000	frame_size = 480	aot = 39	bitrate = 0
-  uint8_t eld_conf[] = {0xf8, 0xf0, 0x30, 0x00};
+  //uint8_t eld_conf[] = {0xf8, 0xf0, 0x30, 0x00};
+  uint8_t eld_conf[] = {0xf8, 0xf0, 0x21, 0x2c, 0x00, 0xbc, 0x00};
   uint8_t *conf[] = {eld_conf};
   int conf_len = sizeof(eld_conf);
 
@@ -720,7 +723,7 @@ static void *srtp_audio_feedback(void *context)
   //return NULL;
 }
 
-pthread_t speaker_pthread;
+pthread_t speaker_pthread = NULL;
 static void *speaker_thread(void *context)
 {
   AccessoryContext *myContext = context;
@@ -735,7 +738,7 @@ static void *speaker_thread(void *context)
   attr.samplerate = AUDIO_SAMPLE_RATE_16000;
   attr.bitwidth = AUDIO_BIT_WIDTH_16;
   attr.soundmode = AUDIO_SOUND_MODE_MONO;
-  attr.frmNum = 20;
+  attr.frmNum = 30;
   attr.numPerFrm = 480;
   attr.chnCnt = 1;
   ret = IMP_AO_SetPubAttr(devID, &attr);
@@ -828,10 +831,10 @@ static void *speaker_thread(void *context)
 
     //As we returned from the call, there must be new data in the queue - get it,
 
-    uint8_t timeData[1024];
+    uint8_t timeData[960];
     uint8_t * ptr_new_data;
     ptr_ring_buffer_dequeue(&ring_buffer, &ptr_new_data);
-    memcpy(&timeData, ptr_new_data, 1024); // this will be a pointer in ring_buffer_storage
+    memcpy(&timeData, ptr_new_data, 960); // this will be a pointer in ring_buffer_storage
     
     //Now unlock the mutex
     pthread_mutex_unlock(&spkQueueMutex);
@@ -839,7 +842,7 @@ static void *speaker_thread(void *context)
     /* Step 5: send frame data. */
     IMPAudioFrame frm;
     frm.virAddr = (uint32_t *)timeData;
-    frm.len = 480;
+    frm.len = 480*2;  //bytes?
     ret = IMP_AO_SendFrame(devID, chnID, &frm, BLOCK);
     if (ret != 0)
     {
@@ -1569,6 +1572,7 @@ void *posStartStream(AccessoryContext *context HAP_UNUSED)
   myContext->session.audioThread.threadStop = 0;
   myContext->session.audioThread.chn_num = 0;
 
+#ifndef MUTE_ALL_SOUND
   HAPLogInfo(&logObject, "Starting srtp audio capture thread");
   //(((myContext->session.audioStream.socket) << 16) | (/*chn_num*/ 0)); // this is a little silly, should pass a stucture of some kind
   ret = pthread_create(&myContext->session.audioThread.thread, NULL, get_srtp_audio_stream, (void *)context);
@@ -1594,11 +1598,14 @@ void *posStartStream(AccessoryContext *context HAP_UNUSED)
     HAPLogError(&logObject, "Create ChnNum%d get_srtp_audio_stream failed", (/*chn_num*/ 0));
   }
   HAPLogInfo(&logObject, "Starting speaker thread");
-  ret = pthread_create(&speaker_pthread, NULL, speaker_thread, (void *)context);
+  if (speaker_pthread == NULL){
+    ret = pthread_create(&speaker_pthread, NULL, speaker_thread, (void *)context);
+  } 
   if (ret < 0)
   {
     HAPLogError(&logObject, "Create ChnNum%d get_srtp_audio_stream failed", (/*chn_num*/ 0));
   }
+#endif
 }
 
 void *posStopStream(AccessoryContext *context HAP_UNUSED)
@@ -1660,7 +1667,7 @@ void *posStopStream(AccessoryContext *context HAP_UNUSED)
       HAPLogError(&logObject, "Killing ChnNum%d srtp video feedback thread failed", (/*chn_num*/ 0));
     }
   }
-
+#ifndef MUTE_ALL_SOUND
   // work around since select isn't working in the feeback thread
   HAPLogInfo(&logObject, "Killing audio srtp feedback thread ");
   if (myContext->session.audioFeedbackThread.thread != NULL)
@@ -1687,6 +1694,7 @@ void *posStopStream(AccessoryContext *context HAP_UNUSED)
 
   // not ending the stream here so reconfigure can stop -> start
   // POSRTPStreamEnd(&myContext->session.rtpVideoStream);
+  #endif
 }
 
 void *posReconfigureStream(AccessoryContext *context HAP_UNUSED)
