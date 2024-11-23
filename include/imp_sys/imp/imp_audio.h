@@ -135,16 +135,17 @@ typedef enum {
 	ADEC_MODE_STREAM = 1,	/**< Stream 方式解码 */
 } IMPAudioDecMode;
 
+
 /**
- * 音频输入输出设备属性.
- */
+  * Audio input and output device properties.
+  */
 typedef struct {
-	IMPAudioSampleRate samplerate;		/**< 音频采样率 */
-	IMPAudioBitWidth bitwidth;			/**< 音频采样精度 */
-	IMPAudioSoundMode soundmode;		/**< 音频声道模式 */
-	int frmNum;							/**< 缓存帧的数目, 取值范围:[2, MAX_AUDIO_FRAME_NUM] */
-	int numPerFrm;						/**< 每帧的采样点个数 */
-	int chnCnt;							/**< 支持的通道数目 */
+	IMPAudioSampleRate samplerate; /**< Audio sample rate */
+	IMPAudioBitWidth bitwidth; /**< Audio sampling accuracy */
+	IMPAudioSoundMode soundmode; /**< audio channel mode */
+	int frmNum; /**<The number of buffered frames, value range: [2, MAX_AUDIO_FRAME_NUM] */
+	int numPerFrm; /**<Number of sampling points per frame */
+	int chnCnt; /**< Number of supported channels */
 } IMPAudioIOAttr;
 
 /**
