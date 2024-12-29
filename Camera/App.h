@@ -42,6 +42,7 @@ typedef struct {
         struct {
             bool homekitActive;
             HAPCharacteristicValue_Active recordingActive;
+            HAPCharacteristicValue_Active recordingAudioActive;
         } operatingMode;
         HAPCharacteristicValue_Active active;
     } state;

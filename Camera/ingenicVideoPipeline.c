@@ -571,7 +571,7 @@ static void *get_jpeg_stream(void *args)
       double fps = (double)frmrate_sp[chnNum] / ((double)(now - statime_sp[chnNum]) / 1000);
       double kbr = (double)bitrate_sp[chnNum] * 8 / (double)(now - statime_sp[chnNum]);
 
-      HAPLogDebug(&logObject,"streamNum[%d]:FPS: %d,Bitrate: %d(kbps)",chnNum, (int)floor(fps),(int)floor(kbr) );
+      HAPLogDebug(&logObject,"streamNum[%d]:FPS: %d, Bitrate: %d(kbps)",chnNum, (int)floor(fps),(int)floor(kbr) );
       //fflush(stdout);
 
       frmrate_sp[chnNum] = 0;

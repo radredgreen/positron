@@ -23,7 +23,7 @@ extern "C" {
 /**
  * Total number of services and characteristics contained in the accessory.
  */
-#define kAttributeCount ((size_t) 40)
+#define kAttributeCount ((size_t) 43)
 
 /**
  * HomeKit Accessory Information service.
@@ -93,6 +93,7 @@ extern const HAPTLV8Characteristic supportedVideoRecordingConfigurationCharacter
 extern const HAPTLV8Characteristic supportedAudioRecordingConfigurationCharacteristic;
 extern const HAPTLV8Characteristic selectedCameraRecordingConfigurationCharacteristic;
 extern const HAPUInt8Characteristic cameraRecMgmtActiveCharacteristic;
+extern const HAPUInt8Characteristic cameraRecMgmtRecAudioActiveCharacteristic;
 extern const HAPService cameraRecordingManagementService;
 
 /**

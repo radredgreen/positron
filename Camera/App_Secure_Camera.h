@@ -31,6 +31,19 @@ HAPError HandleEventSnapActiveWrite(
         const HAPBoolCharacteristicWriteRequest* request,
         bool value,
         void* _Nullable context);
+HAP_RESULT_USE_CHECK
+HAPError HandlePeriodicSnapActiveRead(
+        HAPAccessoryServerRef* server,
+        const HAPBoolCharacteristicReadRequest* request,
+        bool* value,
+        void* _Nullable context);
+
+HAP_RESULT_USE_CHECK
+HAPError HandlePeriodicSnapActiveWrite(
+        HAPAccessoryServerRef* server,
+        const HAPBoolCharacteristicWriteRequest* request,
+        bool value,
+        void* _Nullable context);
 
 HAP_RESULT_USE_CHECK
 HAPError HandleHomeKitCamActiveRead(
@@ -62,6 +75,20 @@ HAPError HandleCamRecMgmtActiveRead(
 
 HAP_RESULT_USE_CHECK
 HAPError HandleCamRecMgmtActiveWrite(
+        HAPAccessoryServerRef* server,
+        const HAPUInt8CharacteristicWriteRequest* request,
+        HAPCharacteristicValue_Active value,
+        void* _Nullable context);
+
+HAP_RESULT_USE_CHECK
+HAPError HandleCamRecMgmtRecAudioActiveRead(
+        HAPAccessoryServerRef* server,
+        const HAPUInt8CharacteristicReadRequest* request,
+        HAPCharacteristicValue_Active* value,
+        void* _Nullable context);
+
+HAP_RESULT_USE_CHECK
+HAPError HandleCamRecMgmtRecAudioActiveWrite(
         HAPAccessoryServerRef* server,
         const HAPUInt8CharacteristicWriteRequest* request,
         HAPCharacteristicValue_Active value,

@@ -1782,6 +1782,7 @@ HAPError HandleMotionDetectedRead(
         bool* value,
         void* _Nullable context HAP_UNUSED) {
     *value = accessoryConfiguration.state.motion.detected;
+    printf("%s: %s\n", __func__, *value ? "true" : "false");
     HAPLogInfo(&kHAPLog_Default, "%s: %s", __func__, *value ? "true" : "false");
     return kHAPError_None;
 }

@@ -90,7 +90,8 @@ static void LoadAccessoryState(void) {
         accessoryConfiguration.state.motion.detected = false;
         accessoryConfiguration.state.operatingMode.homekitActive = true;
         accessoryConfiguration.state.operatingMode.recordingActive = kHAPCharacteristicValue_Active_Active;
-
+        accessoryConfiguration.state.operatingMode.recordingAudioActive = kHAPCharacteristicValue_RecordingAudioActive_Include;
+        accessoryConfiguration.state.active = kHAPCharacteristicValue_Active_Active;
     }
     accessoryConfiguration.state.streaming = kHAPCharacteristicValue_StreamingStatus_Available;
     
@@ -130,7 +131,7 @@ void SaveAccessoryState(void) {
                                   .manufacturer = "radredgreen",
                                   .model = "wyzec3",
                                   .serialNumber = "0001",
-                                  .firmwareVersion = "0003", // this didn't work: V6.21.5.0_191008
+                                  .firmwareVersion = "0004", // this didn't work: V6.21.5.0_191008
                                   .hardwareVersion = "wyzec3",
                                   .services = (const HAPService* const[]) { &accessoryInformationService,
                                                                             &hapProtocolInformationService,

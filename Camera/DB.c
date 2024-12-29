@@ -55,6 +55,7 @@
 #define kIID_CameraOperatingMode    ((uint64_t) 0x0060)
 #define kIID_CameraEventSnapshots   ((uint64_t) 0x0061)
 #define kIID_CameraHomekitCamActive ((uint64_t) 0x0062)
+#define kIID_CameraPeriodicSnapshots   ((uint64_t) 0x0063)
 
 #define kIID_CameraRecordingManagement     ((uint64_t) 0x0070)
 #define kIID_SupportedCamRecordingConfig   ((uint64_t) 0x0071)
@@ -62,12 +63,13 @@
 #define kIID_SupportedAudioRecordingConfig ((uint64_t) 0x0073)
 #define kIID_SelectedCamRecordingConfig    ((uint64_t) 0x0074)
 #define kIID_CameraRecordingMgmtActive     ((uint64_t) 0x0075)
+#define kIID_CameraRecordingMgmtRecAudioActive     ((uint64_t) 0x0076)
 
 #define kIID_DataStreamManagement               ((uint64_t) 0x0080)
 #define kIID_SupportedDataStreamTransportConfig ((uint64_t) 0x0081)
 #define kIID_SetupDataStreamTransport           ((uint64_t) 0x0082)
 
-HAP_STATIC_ASSERT(kAttributeCount == 10 + 2 + 5 + 7 + 2 + 2 + 3 + 6 + 3, AttributeCount_mismatch);
+HAP_STATIC_ASSERT(kAttributeCount == 10 + 2 + 5 + 8 + 2 + 2 + 4 + 7 + 3, AttributeCount_mismatch);
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -460,6 +462,11 @@ const HAPUInt8Characteristic rtpActiveCharacteristic = {
     .iid = kIID_RTPActive,
     .characteristicType = &kHAPCharacteristicType_Active,
     .debugDescription = kHAPCharacteristicDebugDescription_Active,
+    .constraints = { .minimumValue = 0,
+                     .maximumValue = 1,
+                     .stepValue = 0,
+                     .validValues = NULL,
+                     .validValuesRanges = NULL },
     .properties = { .readable = true,
                     .writable = true,
                     .supportsEventNotification = true,
@@ -486,6 +493,7 @@ const HAPService rtpStreamService = { .iid = kIID_RTPStream,
                                               &supportedVideoStreamCharacteristic,
                                               &supportedRTPConfigurationCharacteristic,
                                               &setupEndpointsCharacteristic,
+                                              //&rtpActiveCharacteristic,
                                               NULL } };
 
 const HAPBoolCharacteristic microphoneMuteCharacteristic = {
@@ -570,6 +578,20 @@ const HAPBoolCharacteristic homekitCameraActiveCharacteristic = {
                     .ip = { .controlPoint = false, .supportsWriteResponse = false } },
     .callbacks = { .handleRead = HandleHomeKitCamActiveRead, .handleWrite = NULL }
 };
+const HAPBoolCharacteristic periodicSnapshotsActiveCharacteristic = {
+    .format = kHAPCharacteristicFormat_Bool,
+    .iid = kIID_CameraPeriodicSnapshots,
+    .characteristicType = &kHAPCharacteristicType_PeriodicSnapshotsActive,
+    .debugDescription = kHAPCharacteristicDebugDescription_PeriodicSnapshotsActive,
+    .properties = { .readable = true,
+                    .writable = true,
+                    .supportsEventNotification = true,
+                    .hidden = false,
+                    .requiresTimedWrite = true,
+                    .supportsAuthorizationData = false,
+                    .ip = { .controlPoint = false, .supportsWriteResponse = false } },
+    .callbacks = { .handleRead = HandlePeriodicSnapActiveRead, .handleWrite = HandlePeriodicSnapActiveWrite }
+};
 const HAPService cameraOperatingModeService = { .iid = kIID_CameraOperatingMode,
                                                 .serviceType = &kHAPServiceType_CameraOperatingMode,
                                                 .debugDescription = kHAPServiceDebugDescription_CameraOperatingMode,
@@ -579,6 +601,7 @@ const HAPService cameraOperatingModeService = { .iid = kIID_CameraOperatingMode,
                                                 .characteristics = (const HAPCharacteristic* const[]) {
                                                         &eventSnapshotsActiveCharacteristic,
                                                         &homekitCameraActiveCharacteristic,
+                                                        &periodicSnapshotsActiveCharacteristic,
                                                         NULL } };
 
 /**
@@ -647,6 +670,12 @@ const HAPUInt8Characteristic cameraRecMgmtActiveCharacteristic = {
     .iid = kIID_CameraRecordingMgmtActive,
     .characteristicType = &kHAPCharacteristicType_Active,
     .debugDescription = kHAPCharacteristicDebugDescription_Active,
+    .constraints = { .minimumValue = 0,
+                    .maximumValue = 1,
+                    .stepValue = 0 ,
+                    .validValues = NULL,
+                    .validValuesRanges = NULL },
+
     .properties = { .readable = true,
                     .writable = true,
                     .supportsEventNotification = true,
@@ -655,6 +684,28 @@ const HAPUInt8Characteristic cameraRecMgmtActiveCharacteristic = {
                     .supportsAuthorizationData = false,
                     .ip = { .controlPoint = false, .supportsWriteResponse = false } },
     .callbacks = { .handleRead = HandleCamRecMgmtActiveRead, .handleWrite = HandleCamRecMgmtActiveWrite }
+};
+
+
+
+const HAPUInt8Characteristic cameraRecMgmtRecAudioActiveCharacteristic = {
+    .format = kHAPCharacteristicFormat_UInt8,
+    .iid = kIID_CameraRecordingMgmtRecAudioActive,
+    .characteristicType = &kHAPCharacteristicType_RecordingAudioActive,
+    .debugDescription = kHAPCharacteristicDebugDescription_RecordingAudioActive,
+    .constraints = { .minimumValue = 0,
+                    .maximumValue = 1,
+                    .stepValue = 0 ,
+                    .validValues = NULL,
+                    .validValuesRanges = NULL },
+    .properties = { .readable = true,
+                    .writable = true,
+                    .supportsEventNotification = true,
+                    .hidden = false,
+                    .requiresTimedWrite = false,
+                    .supportsAuthorizationData = false,
+                    .ip = { .controlPoint = false, .supportsWriteResponse = false } },
+    .callbacks = { .handleRead = HandleCamRecMgmtRecAudioActiveRead, .handleWrite = HandleCamRecMgmtRecAudioActiveWrite }
 };
 
 const HAPService cameraRecordingManagementService = {
@@ -668,6 +719,8 @@ const HAPService cameraRecordingManagementService = {
                                                             &supportedVideoRecordingConfigurationCharacteristic,
                                                             &supportedAudioRecordingConfigurationCharacteristic,
                                                             &selectedCameraRecordingConfigurationCharacteristic,
+                                                            &cameraRecMgmtActiveCharacteristic,
+                                                            &cameraRecMgmtRecAudioActiveCharacteristic,
                                                             NULL }
 };
 

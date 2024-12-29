@@ -13,6 +13,8 @@
 #include "DB.h"
 #include "POSCameraController.h"
 
+#include <stdio.h>
+
 extern AccessoryConfiguration accessoryConfiguration;
 
 HAP_RESULT_USE_CHECK
@@ -21,6 +23,7 @@ HAPError HandleEventSnapActiveRead(
         const HAPBoolCharacteristicReadRequest* request HAP_UNUSED,
         bool* value HAP_UNUSED,
         void* _Nullable context HAP_UNUSED) {
+    printf("%s\n", __func__);
     HAPLogInfo(&kHAPLog_Default, "%s", __func__);
     return kHAPError_None;
 }
@@ -31,7 +34,30 @@ HAPError HandleEventSnapActiveWrite(
         const HAPBoolCharacteristicWriteRequest* request HAP_UNUSED,
         bool value HAP_UNUSED,
         void* _Nullable context HAP_UNUSED) {
+        printf("%s\n", __func__);
+        HAPLogInfo(&kHAPLog_Default, "%s: %d", __func__, value);
+    return kHAPError_None;
+}
+
+HAP_RESULT_USE_CHECK
+HAPError HandlePeriodicSnapActiveRead(
+        HAPAccessoryServerRef* server HAP_UNUSED,
+        const HAPBoolCharacteristicReadRequest* request HAP_UNUSED,
+        bool* value HAP_UNUSED,
+        void* _Nullable context HAP_UNUSED) {
+    printf("%s\n", __func__);
     HAPLogInfo(&kHAPLog_Default, "%s", __func__);
+    return kHAPError_None;
+}
+
+HAP_RESULT_USE_CHECK
+HAPError HandlePeriodicSnapActiveWrite(
+        HAPAccessoryServerRef* server HAP_UNUSED,
+        const HAPBoolCharacteristicWriteRequest* request HAP_UNUSED,
+        bool value HAP_UNUSED,
+        void* _Nullable context HAP_UNUSED) {
+        printf("%s\n", __func__);
+        HAPLogInfo(&kHAPLog_Default, "%s: %d", __func__, value);
     return kHAPError_None;
 }
 
@@ -41,6 +67,7 @@ HAPError HandleHomeKitCamActiveRead(
         const HAPBoolCharacteristicReadRequest* request HAP_UNUSED,
         bool* value,
         void* _Nullable context HAP_UNUSED) {
+    printf("%s\n", __func__);
     value = &accessoryConfiguration.state.operatingMode.homekitActive;
     HAPLogInfo(&kHAPLog_Default, "%s: %d", __func__, *value);
     return kHAPError_None;
@@ -52,6 +79,7 @@ HAPError HandleSelectedCamRecConfRead(
         const HAPTLV8CharacteristicReadRequest* request HAP_UNUSED,
         HAPTLVWriterRef* responseWriter,
         void* _Nullable context HAP_UNUSED) {
+    printf("%s\n", __func__);
     HAPPrecondition(responseWriter);
     HAPLogInfo(&kHAPLog_Default, "%s", __func__);
     return kHAPError_None;
@@ -63,6 +91,7 @@ HAPError HandleSelectedCamRecConfWrite(
         const HAPTLV8CharacteristicWriteRequest* request HAP_UNUSED,
         HAPTLVReaderRef* requestReader,
         void* _Nullable context HAP_UNUSED) {
+    printf("%s\n", __func__);
     HAPPrecondition(requestReader);
     HAPLogInfo(&kHAPLog_Default, "%s", __func__);
     return kHAPError_None;
@@ -74,7 +103,8 @@ HAPError HandleCamRecMgmtActiveRead(
         const HAPUInt8CharacteristicReadRequest* request HAP_UNUSED,
         HAPCharacteristicValue_Active* value,
         void* _Nullable context HAP_UNUSED) {
-    value = &accessoryConfiguration.state.operatingMode.recordingActive;
+    printf("%s\n", __func__);
+    *value = accessoryConfiguration.state.operatingMode.recordingActive;
     HAPLogInfo(&kHAPLog_Default, "%s: %d", __func__, *value);
     return kHAPError_None;
 }
@@ -85,9 +115,39 @@ HAPError HandleCamRecMgmtActiveWrite(
         const HAPUInt8CharacteristicWriteRequest* request,
         HAPCharacteristicValue_Active value,
         void* _Nullable context HAP_UNUSED) {
+    printf("%s\n", __func__);
     HAPLogInfo(&kHAPLog_Default, "%s: %d", __func__, value);
     if (accessoryConfiguration.state.operatingMode.recordingActive != value) {
         accessoryConfiguration.state.operatingMode.recordingActive = value;
+
+        SaveAccessoryState();
+
+        HAPAccessoryServerRaiseEvent(server, request->characteristic, request->service, request->accessory);
+    }
+    return kHAPError_None;
+}
+HAP_RESULT_USE_CHECK
+HAPError HandleCamRecMgmtRecAudioActiveRead(
+        HAPAccessoryServerRef* server HAP_UNUSED,
+        const HAPUInt8CharacteristicReadRequest* request HAP_UNUSED,
+        HAPCharacteristicValue_Active* value,
+        void* _Nullable context HAP_UNUSED) {
+    printf("%s\n", __func__);
+    *value = accessoryConfiguration.state.operatingMode.recordingAudioActive;
+    HAPLogInfo(&kHAPLog_Default, "%s: %d", __func__, *value);
+    return kHAPError_None;
+}
+
+HAP_RESULT_USE_CHECK
+HAPError HandleCamRecMgmtRecAudioActiveWrite(
+        HAPAccessoryServerRef* server,
+        const HAPUInt8CharacteristicWriteRequest* request,
+        HAPCharacteristicValue_Active value,
+        void* _Nullable context HAP_UNUSED) {
+    printf("%s\n", __func__);
+    HAPLogInfo(&kHAPLog_Default, "%s: %d", __func__, value);
+    if (accessoryConfiguration.state.operatingMode.recordingAudioActive != value) {
+        accessoryConfiguration.state.operatingMode.recordingAudioActive = value;
 
         SaveAccessoryState();
 
@@ -114,6 +174,7 @@ HAPError HandleSetupDSTransportWrite(
         HAPTLVReaderRef* requestReader,
         void* _Nullable context HAP_UNUSED) {
     HAPPrecondition(requestReader);
+    printf("%s\n", __func__);
     HAPLogInfo(&kHAPLog_Default, "%s", __func__);
     return kHAPError_None;
 }
@@ -125,6 +186,7 @@ HAPError HandleSupportedAudioConfRead(
         HAPTLVWriterRef* responseWriter,
         void* _Nullable context HAP_UNUSED) {
     HAPPrecondition(responseWriter);
+    printf("%s\n", __func__);
     HAPLogInfo(&kHAPLog_Default, "%s", __func__);
     return kHAPError_None;
 }
@@ -136,6 +198,7 @@ HAPError HandleSupportedCamRecConfRead(
         HAPTLVWriterRef* responseWriter,
         void* _Nullable context HAP_UNUSED) {
     HAPPrecondition(responseWriter);
+    printf("%s\n", __func__);
     HAPLogInfo(&kHAPLog_Default, "%s", __func__);
     return kHAPError_None;
 }
@@ -147,6 +210,7 @@ HAPError HandleSupportedDSTransportConfRead(
         HAPTLVWriterRef* responseWriter,
         void* _Nullable context HAP_UNUSED) {
     HAPPrecondition(responseWriter);
+    printf("%s\n", __func__);
     HAPLogInfo(&kHAPLog_Default, "%s", __func__);
     return kHAPError_None;
 }
@@ -158,6 +222,7 @@ HAPError HandleSupportedVidRecConfRead(
         HAPTLVWriterRef* responseWriter,
         void* _Nullable context HAP_UNUSED) {
     HAPPrecondition(responseWriter);
+    printf("%s\n", __func__);
     HAPLogInfo(&kHAPLog_Default, "%s", __func__);
     return kHAPError_None;
 }
@@ -168,7 +233,8 @@ HAPError HandleRTPActiveRead(
         const HAPUInt8CharacteristicReadRequest* request HAP_UNUSED,
         HAPCharacteristicValue_Active* value,
         void* _Nullable context HAP_UNUSED) {
-    value = &accessoryConfiguration.state.active;
+    *value = accessoryConfiguration.state.active;
+    printf("%s\n", __func__);
     HAPLogInfo(&kHAPLog_Default, "%s: %d", __func__, *value);
     return kHAPError_None;
 }
