@@ -16,7 +16,7 @@
  */
 
 
-#include "POSRingBuffer.h"
+#include "POSRingBufferAudioOut.h"
 
 /**
  * @file
@@ -24,7 +24,7 @@
  * Credit: https://github.com/AndersKaloer/Ring-Buffer
  */
 
-void ptr_ring_buffer_init(ring_buffer_t *buffer, void *buf, size_t buf_size) {
+void ptr_ring_buffer_ao_init(ring_buffer_ao_t *buffer, void *buf, size_t buf_size) {
   RING_BUFFER_ASSERT(RING_BUFFER_IS_POWER_OF_TWO(buf_size) == 1);
   buffer->buffer = buf;
   buffer->buffer_mask = buf_size - 1;
@@ -32,9 +32,9 @@ void ptr_ring_buffer_init(ring_buffer_t *buffer, void *buf, size_t buf_size) {
   buffer->head_index = 0;
 }
 
-void ptr_ring_buffer_queue(ring_buffer_t *buffer, void * data) {
+void ptr_ring_buffer_ao_queue(ring_buffer_ao_t *buffer, void * data) {
   /* Is buffer full? */
-  if(ptr_ring_buffer_is_full(buffer)) {
+  if(ptr_ring_buffer_ao_is_full(buffer)) {
     /* Is going to overwrite the oldest byte */
     /* Increase tail index */
     buffer->tail_index = ((buffer->tail_index + 1) & RING_BUFFER_MASK(buffer));
@@ -45,8 +45,8 @@ void ptr_ring_buffer_queue(ring_buffer_t *buffer, void * data) {
   buffer->head_index = ((buffer->head_index + 1) & RING_BUFFER_MASK(buffer));
 }
 
-uint8_t ptr_ring_buffer_dequeue(ring_buffer_t *buffer, void ** data) {
-  if(ptr_ring_buffer_is_empty(buffer)) {
+uint8_t ptr_ring_buffer_ao_dequeue(ring_buffer_ao_t *buffer, void ** data) {
+  if(ptr_ring_buffer_ao_is_empty(buffer)) {
     /* No items */
     return 0;
   }
@@ -57,8 +57,8 @@ uint8_t ptr_ring_buffer_dequeue(ring_buffer_t *buffer, void ** data) {
 }
 
 
-uint8_t ptr_ring_buffer_peek(ring_buffer_t *buffer, void ** data, ring_buffer_size_t index) {
-  if(index >= ptr_ring_buffer_num_items(buffer)) {
+uint8_t ptr_ring_buffer_ao_peek(ring_buffer_ao_t *buffer, void ** data, ring_buffer_size_t index) {
+  if(index >= ptr_ring_buffer_ao_num_items(buffer)) {
     /* No items at index */
     return 0;
   }
@@ -69,7 +69,7 @@ uint8_t ptr_ring_buffer_peek(ring_buffer_t *buffer, void ** data, ring_buffer_si
   return 1;
 }
 
-extern inline uint8_t ptr_ring_buffer_is_empty(ring_buffer_t *buffer);
-extern inline uint8_t ptr_ring_buffer_is_full(ring_buffer_t *buffer);
-extern inline ring_buffer_size_t ptr_ring_buffer_num_items(ring_buffer_t *buffer);
+extern inline uint8_t ptr_ring_buffer_ao_is_empty(ring_buffer_ao_t *buffer);
+extern inline uint8_t ptr_ring_buffer_ao_is_full(ring_buffer_ao_t *buffer);
+extern inline ring_buffer_size_t ptr_ring_buffer_ao_num_items(ring_buffer_ao_t *buffer);
 

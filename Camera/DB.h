@@ -1,11 +1,19 @@
-// Copyright (c) 2015-2019 The HomeKit ADK Contributors
-//
-// Licensed under the Apache License, Version 2.0 (the “License”);
-// you may not use this file except in compliance with the License.
-// See [CONTRIBUTORS.md] for the list of HomeKit ADK project authors.
-
-// Basic light bulb database example. This header file, and the corresponding DB.c implementation in the ADK, is
-// platform-independent.
+/* 
+ * This file is part of the positron distribution (https://github.com/radredgreen/positron).
+ * Copyright (c) 2024 RadRedGreen.
+ * 
+ * This program is free software: you can redistribute it and/or modify  
+ * it under the terms of the GNU General Public License as published by  
+ * the Free Software Foundation, version 3.
+ *
+ * This program is distributed in the hope that it will be useful, but 
+ * WITHOUT ANY WARRANTY; without even the implied warranty of 
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU 
+ * General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License 
+ * along with this program. If not, see <http://www.gnu.org/licenses/>.
+ */
 
 #ifndef DB_H
 #define DB_H
@@ -23,7 +31,7 @@ extern "C" {
 /**
  * Total number of services and characteristics contained in the accessory.
  */
-#define kAttributeCount ((size_t) 43)
+#define kAttributeCount ((size_t) 47)
 
 /**
  * HomeKit Accessory Information service.
@@ -74,6 +82,7 @@ extern const HAPService microphoneService;
  * Motion Detect service
  */
 extern const HAPBoolCharacteristic motionDetectedCharacteristic;
+extern const HAPBoolCharacteristic motionActiveCharacteristic;
 extern const HAPService motionDetectService;
 
 /**

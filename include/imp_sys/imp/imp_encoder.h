@@ -120,11 +120,11 @@ typedef enum {
  * 定义编码帧码流包结构体
  */
 typedef struct {
-	uint32_t	offset;						/**< 码流包地址偏移 */
-	uint32_t	length;							/**< 码流包长度 */
-	int64_t	timestamp;						/**< 时间戳，单位us */
-	bool	frameEnd;						/**< 帧结束标识 */
-	IMPEncoderNalType   nalType;				/**< H.264和H.265编码Channel码流NAL类型 */
+	uint32_t	offset;						/**< Stream packet address offset  */
+	uint32_t	length;							/**< Stream packet length */
+	int64_t	timestamp;						/**< Timestamp, unit us  */
+	bool	frameEnd;						/**< frame end mark */
+	IMPEncoderNalType   nalType;				/**< H.264 and H.265 encoding Channel stream NAL type  */
 	IMPEncoderSliceType sliceType;
 } IMPEncoderPack;
 
@@ -132,12 +132,12 @@ typedef struct {
  * 定义编码帧码流类型结构体
  */
 typedef struct {
-	uint32_t		  phyAddr;          /**< 帧码流物理地址 */
-	uint32_t		  virAddr;          /**< 帧码流包虚拟地址 */
-	uint32_t		  streamSize;       /**< virAddr对应分配的地址空间大小 */
-	IMPEncoderPack  *pack;				/**< 帧码流包结构 */
-	uint32_t        packCount;			/**< 一帧码流的所有包的个数 */
-	uint32_t        seq;				/**< 编码帧码流序列号 */
+	uint32_t		  phyAddr;          /**< Frame stream packet physical address */
+	uint32_t		  virAddr;          /**< Frame stream packet virtual address */
+	uint32_t		  streamSize;       /**< size of the allocated address space*/
+	IMPEncoderPack  *pack;				/**< Frame stream packet structure */
+	uint32_t        packCount;			/**< The number of all packets in a frame stream */
+	uint32_t        seq;				/**< Coded frame code stream sequence number */
 } IMPEncoderStream;
 
 typedef enum {

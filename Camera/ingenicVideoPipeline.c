@@ -40,7 +40,7 @@
   *     video 0 thread (SRTP video stream) (ephemeral) 
   *         Description: waits for NALs and creates SRTP packets
   * 
-  *     video 1 thread ( HKSV ) (ephemeral) 
+  *     video 1 thread ( HKSV recording ) (ephemeral) 
   *         Description: buffers video data and sends mp4 frames to hub / apple tv
   * 
   *     snapshot thread ( jpeg ) (ephemeral)
@@ -95,12 +95,13 @@
 
 #include <HAP.h>
 #include <HAP+Internal.h>
+#include "App.h"
 
 static const HAPLogObject logObject = { .subsystem = kHAP_LogSubsystem, .category = "videoPipeline" };
 
 #define TAG "videoPipeline"
 
-#define SENSOR_FRAME_RATE_NUM			25
+#define SENSOR_FRAME_RATE_NUM			24
 #define SENSOR_FRAME_RATE_DEN			1
 #define SENSOR_FRAME_RATE_NUM_NIGHT		10
 
@@ -114,6 +115,10 @@ static const HAPLogObject logObject = { .subsystem = kHAP_LogSubsystem, .categor
 
 #define IRCUT_EN_GPIO 52 
 #define IRCUT_DIS_GPIO 53
+
+#define RED_LED_GPIO 38 
+#define BLUE_LED_GPIO 39 
+
 
 //for gc2053
 #define EXP_NIGHT_THRESHOLD 30000 
@@ -209,6 +214,94 @@ int sample_set_IRCUT(int enable)
 
 }
 
+int set_red_led(bool enable)
+{
+
+	int fd, fd1;
+	char on[4], off[4];
+
+	fd = open("/sys/class/gpio/export", O_WRONLY);
+	if(fd < 0) {
+		HAPLogError(&logObject, "open /sys/class/gpio/export error !");
+		return -1;
+	}
+	write(fd, STRINGIFY(RED_LED_GPIO), 2);
+	close(fd);
+
+	fd1 = open("/sys/class/gpio/gpio" STRINGIFY(RED_LED_GPIO) "/direction", O_RDWR);
+	if(fd1 < 0) {
+		HAPLogError(&logObject, "open /sys/class/gpio/gpio" STRINGIFY(RED_LED_GPIO) "/direction error !");
+		return -1;
+	}
+	write(fd1, "out", 3);
+	close(fd1);
+
+	fd1 = open("/sys/class/gpio/gpio" STRINGIFY(RED_LED_GPIO) "/active_low", O_RDWR);
+	if(fd1 < 0) {
+		HAPLogError(&logObject, "open /sys/class/gpio/gpio" STRINGIFY(RED_LED_GPIO) "/active_low error !");
+		return -1;
+	}
+	write(fd1, "1", 1);
+	close(fd1);
+
+	fd1 = open("/sys/class/gpio/gpio" STRINGIFY(RED_LED_GPIO) "/value", O_RDWR);
+	if(fd1 < 0) {
+		HAPLogError(&logObject, "open /sys/class/gpio/gpio" STRINGIFY(RED_LED_GPIO) "/value error !");
+		return -1;
+	}
+
+	if (enable == 1) {
+		write(fd1, "1", 1);
+	} else {
+		write(fd1, "0", 1);
+	}
+
+	close(fd1);
+	return 0;
+
+}
+
+
+int set_flip(bool value){
+		int ret;
+		IMPISPTuningOpsMode targetmode;
+		if(value) targetmode = IMPISP_TUNING_OPS_MODE_ENABLE;
+		else targetmode = IMPISP_TUNING_OPS_MODE_DISABLE;
+
+		IMPISPTuningOpsMode pmode;
+		
+		ret = IMP_ISP_Tuning_GetISPHflip(&pmode);
+		if (ret < 0){
+			HAPLogError(&logObject,"failed to get horiz flip\n");
+		}
+
+		ret = IMP_ISP_Tuning_SetISPHflip(targetmode);
+		if (ret < 0){
+			HAPLogError(&logObject,"failed to set horiz flip\n");
+		}
+		ret = IMP_ISP_Tuning_GetISPHflip(&pmode);
+		if (ret < 0){
+			HAPLogError(&logObject,"failed to get horiz flip\n");
+		}
+		if (pmode != targetmode){
+			HAPLogError(&logObject,"tried to horiz flip, but imp didn't take the change\n");
+
+		}
+
+		ret = IMP_ISP_Tuning_SetISPVflip(targetmode);
+		if (ret < 0){
+			HAPLogError(&logObject,"failed to set vert flip\n");
+		}
+		ret = IMP_ISP_Tuning_GetISPVflip(&pmode);
+		if (ret < 0){
+			HAPLogError(&logObject,"failed to get very flip\n");
+		}
+		if (pmode != targetmode){
+			HAPLogError(&logObject,"tried to vert flip, but imp didn't take the change\n");
+
+		}
+		return(0);
+}
 
 #define EXP_LENGTH (8 /*sec*/ * 24 /*cycles*/)
 #define NUM_EXP_VALUES (EXP_LENGTH / 8)
@@ -224,14 +317,15 @@ char *get_curr_timestr(char *buf) {
 	return buf;
 }
 static int  g_soft_ps_running = 1;
-//TODO: make the IRLED controllable by homekit switch
-static int ir_illumination = 0;		// use IR LEDs when dark
+
+static int ir_illumination = 1;		// use IR LEDs when dark. set to 1 and let home kit night vision characteristic control
 static int force_color = 0;			// use color mode, even at night
 static int flip_image = 0;			// flip 180deg for ceiling mounts
 
 // credit: https://raw.githubusercontent.com/geekman/t20-rtspd/master/imp-common.c
 void *sample_soft_photosensitive_ctrl(void *p)
 {
+	AccessoryConfiguration * accessoryConfiguration = (AccessoryConfiguration *) p;
 	int evDebugCount = 0;
 	int hysteresisCount = 5;
 	char tmstr[16];
@@ -385,7 +479,7 @@ void *sample_soft_photosensitive_ctrl(void *p)
 		}
 
 		// control IR LEDs
-		if (avgExp > EXP_IR_THRESHOLD) {
+		if (avgExp > EXP_IR_THRESHOLD && accessoryConfiguration->state.operatingMode.nightVision) {
 			// only log for first time
 			if (! ir_leds_active) {
 				HAPLogDebug(&logObject, "[%s] avg exp is %d. turning on IR LEDs",
@@ -407,7 +501,7 @@ void *sample_soft_photosensitive_ctrl(void *p)
 
 			if (ir_illumination) pwm_set_duty(pwm_cfg.channel, level);
 			ir_leds_active = 1;
-		} else if (ir_leds_active && avgExp < EXP_IR_OFF_THRESHOLD) {
+		} else if (ir_leds_active && (avgExp < EXP_IR_OFF_THRESHOLD || !accessoryConfiguration->state.operatingMode.nightVision)) {
 			HAPLogDebug(&logObject, "[%s] avg exp is %d. turning off IR LEDs",
 						get_curr_timestr((char *) &tmstr), avgExp);
 			evDebugCount = 10; // start logging 10s of EV data
@@ -425,99 +519,9 @@ end:
 }
 
 
-
 static int frmrate_sp[3] = { 0 };
 static int statime_sp[3] = { 0 };
 static int bitrate_sp[3] = { 0 };
-
-static void *get_srtp_video_stream(void *args)
-{
-  int val, i, chnNum, ret;
-  char stream_path[64];
-  IMPEncoderEncType encType;
-  int stream_fd = -1, totalSaveCnt = 0;
-
-  val = (int)args;
-  chnNum = val & 0xffff;
-  encType = (val >> 16) & 0xffff;
-
-  prctl(PR_SET_NAME, "srtp_video");
-
-  ret = IMP_Encoder_StartRecvPic(chnNum);
-  if (ret < 0) {
-    HAPLogError(&logObject, "IMP_Encoder_StartRecvPic(%d) failed", chnNum);
-    return ((void *)-1);
-  }
-
-  //for (i = 0; i < totalSaveCnt; i++) {
-  // //TODO: in the future, check the mutex for changes to the stream here
-  while(1){
-    ret = IMP_Encoder_PollingStream(chnNum, 1000);
-    if (ret < 0) {
-      HAPLogError(&logObject, "IMP_Encoder_PollingStream(%d) timeout", chnNum);
-      continue;
-    }
-
-    IMPEncoderStream stream;
-    /* Get H264 or H265 Stream */
-    ret = IMP_Encoder_GetStream(chnNum, &stream, 1);
-	if (ret < 0) {
-      HAPLogError(&logObject, "IMP_Encoder_GetStream(%d) failed", chnNum);
-      return ((void *)-1);
-    }
-
-#if 1
-	int i, len = 0;
-    for (i = 0; i < stream.packCount; i++) {
-      len += stream.pack[i].length;
-    }
-    bitrate_sp[chnNum] += len;
-    frmrate_sp[chnNum]++;
-
-    int64_t now = IMP_System_GetTimeStamp() / 1000;
-    if(((int)(now - statime_sp[chnNum]) / 1000) >= 10){ // report bit rate every 10 seconds
-      double fps = (double)frmrate_sp[chnNum] / ((double)(now - statime_sp[chnNum]) / 1000);
-      double kbr = (double)bitrate_sp[chnNum] * 8 / (double)(now - statime_sp[chnNum]);
-
-      HAPLogDebug(&logObject,"streamNum[%d]:FPS: %d,Bitrate: %d(kbps)",chnNum, (int)floor(fps),(int)floor(kbr) );
-      
-      frmrate_sp[chnNum] = 0;
-      bitrate_sp[chnNum] = 0;
-      statime_sp[chnNum] = now;
-    }
-#endif
-//TODO: for now just dump the data
-#if 0
-    if (ret < 0) {
-      HAPLogError(&logObject, "IMP_Encoder_GetStream(%d) failed", chnNum);
-      return ((void *)-1);
-    }
-
-    if (encType == IMP_ENC_TYPE_JPEG) {
-      ret = save_stream_by_name(stream_path, i, &stream);
-      if (ret < 0) {
-        return ((void *)ret);
-      }
-    }
-    else {
-      ret = save_stream(stream_fd, &stream);
-      if (ret < 0) {
-        close(stream_fd);
-        return ((void *)ret);
-      }
-    }
-#endif
-    IMP_Encoder_ReleaseStream(chnNum, &stream);
-  }
-
-  ret = IMP_Encoder_StopRecvPic(chnNum);
-  if (ret < 0) {
-    HAPLogError(&logObject, "IMP_Encoder_StopRecvPic(%d) failed", chnNum);
-    return ((void *)-1);
-  }
-
-  return ((void *)0);
-}
 
 
 pthread_mutex_t snapshot_mutex = PTHREAD_MUTEX_INITIALIZER;
@@ -541,99 +545,94 @@ static void *get_jpeg_stream(void *args)
     return ((void *)-1);
   }
 
-  //for (i = 0; i < totalSaveCnt; i++) {
-  // //TODO: in the future, check the mutex for changes to the stream here
   while(1){
-    ret = IMP_Encoder_PollingStream(chnNum, 5000);
-    if (ret < 0) {
-      HAPLogError(&logObject, "IMP_Encoder_PollingStream(%d) timeout", chnNum);
-      continue;
-    }
+			ret = IMP_Encoder_PollingStream(chnNum, 5000);
+			if (ret < 0) {
+				HAPLogError(&logObject, "IMP_Encoder_PollingStream(%d) timeout", chnNum);
+				continue;
+			}
 
-    IMPEncoderStream stream;
-    /* Get H264 or H265 Stream */
-    ret = IMP_Encoder_GetStream(chnNum, &stream, 1);
-	if (ret < 0) {
-      HAPLogError(&logObject, "IMP_Encoder_GetStream(%d) failed", chnNum);
-      return ((void *)-1);
-    }
+			IMPEncoderStream stream;
+			ret = IMP_Encoder_GetStream(chnNum, &stream, 1);
+		if (ret < 0) {
+				HAPLogError(&logObject, "IMP_Encoder_GetStream(%d) failed", chnNum);
+				return ((void *)-1);
+			}
 
-#if 1
-	int i, len = 0;
-    for (i = 0; i < stream.packCount; i++) {
-      len += stream.pack[i].length;
-    }
-    bitrate_sp[chnNum] += len;
-    frmrate_sp[chnNum]++;
+		int i, len = 0;
+			for (i = 0; i < stream.packCount; i++) {
+				len += stream.pack[i].length;
+			}
+			bitrate_sp[chnNum] += len;
+			frmrate_sp[chnNum]++;
 
-    int64_t now = IMP_System_GetTimeStamp() / 1000;
-    if(((int)(now - statime_sp[chnNum]) / 1000) >= 10){ // report bit rate every 10 seconds
-      double fps = (double)frmrate_sp[chnNum] / ((double)(now - statime_sp[chnNum]) / 1000);
-      double kbr = (double)bitrate_sp[chnNum] * 8 / (double)(now - statime_sp[chnNum]);
+			int64_t now = IMP_System_GetTimeStamp() / 1000;
+			if(((int)(now - statime_sp[chnNum]) / 1000) >= 10){ // report bit rate every 10 seconds
+				double fps = (double)frmrate_sp[chnNum] / ((double)(now - statime_sp[chnNum]) / 1000);
+				double kbr = (double)bitrate_sp[chnNum] * 8 / (double)(now - statime_sp[chnNum]);
 
-      HAPLogDebug(&logObject,"streamNum[%d]:FPS: %d, Bitrate: %d(kbps)",chnNum, (int)floor(fps),(int)floor(kbr) );
-      //fflush(stdout);
+				HAPLogDebug(&logObject,"streamNum[%d]:FPS: %d, Bitrate: %d(kbps)",chnNum, (int)floor(fps),(int)floor(kbr) );
+				//fflush(stdout);
 
-      frmrate_sp[chnNum] = 0;
-      bitrate_sp[chnNum] = 0;
-      statime_sp[chnNum] = now;
-    }
-#endif
-	char * snap_path = "/tmp/snap.jpg";
+				frmrate_sp[chnNum] = 0;
+				bitrate_sp[chnNum] = 0;
+				statime_sp[chnNum] = now;
+			}
+		char * snap_path = "/tmp/snap.jpg";
 
-//	HAPLogDebug(&logObject, "Locking snapshot mutex");
-	if ( pthread_mutex_lock(&snapshot_mutex) != 0){
-		HAPLogError(&logObject, "Locking snapshot mutex failed: %s", strerror(errno));
-	}
+		//	HAPLogDebug(&logObject, "Locking snapshot mutex");
+		if ( pthread_mutex_lock(&snapshot_mutex) != 0){
+			HAPLogError(&logObject, "Locking snapshot mutex failed: %s", strerror(errno));
+		}
 
 
-	//TTTHAPLogDebug(&logObject, "Open Snap file %s ", snap_path);
-	int snap_fd = open(snap_path, O_RDWR | O_CREAT | O_TRUNC, 0777);
-	if (snap_fd < 0) {
-		HAPLogError(&logObject, "failed: %s", strerror(errno));
-	}
-	else{
-		//TTTHAPLogDebug(&logObject, "OK");
+		//TTTHAPLogDebug(&logObject, "Open Snap file %s ", snap_path);
+		int snap_fd = open(snap_path, O_RDWR | O_CREAT | O_TRUNC, 0777);
+		if (snap_fd < 0) {
+			HAPLogError(&logObject, "failed: %s", strerror(errno));
+		}
+		else{
+			//TTTHAPLogDebug(&logObject, "OK");
 
-		int ret, nr_pack = stream.packCount;
+			int ret, nr_pack = stream.packCount;
 
-		// //TTTHAPLogDebug(&logObject, "----------packCount=%d, stream.seq=%u start----------", stream.packCount, stream.seq);
-		for (i = 0; i < nr_pack; i++) {
-		// //TTTHAPLogDebug(&logObject, "[%d]:%10u,%10lld,%10u,%10u,%10u", i, stream.pack[i].length, stream.pack[i].timestamp, stream.pack[i].frameEnd, *((uint32_t *)(&stream.pack[i].nalType)), stream.pack[i].sliceType);
-			IMPEncoderPack *pack = &stream.pack[i];
-			if(pack->length){
-				uint32_t remSize = stream.streamSize - pack->offset;
-				if(remSize < pack->length){
-					ret = write(snap_fd, (void *)(stream.virAddr + pack->offset), remSize);
-					if (ret != remSize) {
-						//TTTHAPLogDebug(&logObject, "stream write ret(%d) != pack[%d].remSize(%d) error:%s", ret, i, remSize, strerror(errno));
-						// return -1;
-					}
-					ret = write(snap_fd, (void *)stream.virAddr, pack->length - remSize);
-					if (ret != (pack->length - remSize)) {
-						//TTTHAPLogDebug(&logObject, "stream write ret(%d) != pack[%d].(length-remSize)(%d) error:%s", ret, i, (pack->length - remSize), strerror(errno));
-						// return -1;
-					}
-				}else {
-					ret = write(snap_fd, (void *)(stream.virAddr + pack->offset), pack->length);
-					if (ret != pack->length) {
-						//TTTHAPLogDebug(&logObject, "stream write ret(%d) != pack[%d].length(%d) error:%s", ret, i, pack->length, strerror(errno));
-						// return -1;
+			// //TTTHAPLogDebug(&logObject, "----------packCount=%d, stream.seq=%u start----------", stream.packCount, stream.seq);
+			for (i = 0; i < nr_pack; i++) {
+			// //TTTHAPLogDebug(&logObject, "[%d]:%10u,%10lld,%10u,%10u,%10u", i, stream.pack[i].length, stream.pack[i].timestamp, stream.pack[i].frameEnd, *((uint32_t *)(&stream.pack[i].nalType)), stream.pack[i].sliceType);
+				IMPEncoderPack *pack = &stream.pack[i];
+				if(pack->length){
+					uint32_t remSize = stream.streamSize - pack->offset;
+					if(remSize < pack->length){
+						ret = write(snap_fd, (void *)(stream.virAddr + pack->offset), remSize);
+						if (ret != remSize) {
+							//TTTHAPLogDebug(&logObject, "stream write ret(%d) != pack[%d].remSize(%d) error:%s", ret, i, remSize, strerror(errno));
+							// return -1;
+						}
+						ret = write(snap_fd, (void *)stream.virAddr, pack->length - remSize);
+						if (ret != (pack->length - remSize)) {
+							//TTTHAPLogDebug(&logObject, "stream write ret(%d) != pack[%d].(length-remSize)(%d) error:%s", ret, i, (pack->length - remSize), strerror(errno));
+							// return -1;
+						}
+					}else {
+						ret = write(snap_fd, (void *)(stream.virAddr + pack->offset), pack->length);
+						if (ret != pack->length) {
+							//TTTHAPLogDebug(&logObject, "stream write ret(%d) != pack[%d].length(%d) error:%s", ret, i, pack->length, strerror(errno));
+							// return -1;
+						}
 					}
 				}
 			}
+			close(snap_fd);
+
+		////TTTHAPLogDebug(&logObject, "----------packCount=%d, stream.seq=%u end----------", stream.packCount, stream.seq);
 		}
-		close(snap_fd);
 
-	////TTTHAPLogDebug(&logObject, "----------packCount=%d, stream.seq=%u end----------", stream.packCount, stream.seq);
-	}
+	//	HAPLogDebug(&logObject, "Unlocking snapshot mutex");
+		if ( pthread_mutex_unlock(&snapshot_mutex) != 0){
+			HAPLogError(&logObject, "Unocking snapshot mutex failed: %s", strerror(errno));
+		}
 
-//	HAPLogDebug(&logObject, "Unlocking snapshot mutex");
-	if ( pthread_mutex_unlock(&snapshot_mutex) != 0){
-		HAPLogError(&logObject, "Unocking snapshot mutex failed: %s", strerror(errno));
-	}
-
-    IMP_Encoder_ReleaseStream(chnNum, &stream);
+		IMP_Encoder_ReleaseStream(chnNum, &stream);
   }
 
   ret = IMP_Encoder_StopRecvPic(chnNum);
@@ -651,7 +650,7 @@ extern int IMP_OSD_SetPoolSize(int size);
 
 extern void *sample_ivs_move_get_result_process(void *arg);
 
-int initVideoPipeline(){
+int initVideoPipeline(AccessoryConfiguration *accessoryConfiguration){
 
 	int ret = 0;
 	IMPSensorInfo sensor_info;
@@ -887,7 +886,8 @@ int initVideoPipeline(){
 			SENSOR_WIDTH, SENSOR_HEIGHT,
 			SENSOR_FRAME_RATE_NUM, SENSOR_FRAME_RATE_DEN,
 			SENSOR_FRAME_RATE_NUM * 2 / SENSOR_FRAME_RATE_DEN, // GOP length (2 sec)
-			2, // uMaxSameSenceCnt ??
+			2, // uMaxSameSenceCnt ?? 
+			// uMaxSameSenceCnt is the maximum number of the same scene. This value is multiplied by the length of uGopLength is the I frame interval
 			(S_RC_METHOD == IMP_ENC_RC_MODE_FIXQP) ? 35 : -1, // iInitialQP
 			1000 ); // uTargetBitRate
 	if (ret < 0) {
@@ -1028,20 +1028,20 @@ int initVideoPipeline(){
 	for (j = 0; j < 1/*2*/; j++) {
 		for (i = 0; i < 1/*2*/; i++) {
 		  if((i==0)&&(j==0)){
-			ivs_param.roiRect[j * 2 + i].p0.x = i * ivs_param.frameInfo.width /* / 2 */;
-			ivs_param.roiRect[j * 2 + i].p0.y = j * ivs_param.frameInfo.height /* / 2 */;
-			ivs_param.roiRect[j * 2 + i].p1.x = (i + 1) * ivs_param.frameInfo.width /* / 2 */ - 1;
-			ivs_param.roiRect[j * 2 + i].p1.y = (j + 1) * ivs_param.frameInfo.height /* / 2 */ - 1;
+				ivs_param.roiRect[j * 2 + i].p0.x = i * ivs_param.frameInfo.width /* / 2 */;
+				ivs_param.roiRect[j * 2 + i].p0.y = j * ivs_param.frameInfo.height /* / 2 */;
+				ivs_param.roiRect[j * 2 + i].p1.x = (i + 1) * ivs_param.frameInfo.width /* / 2 */ - 1;
+				ivs_param.roiRect[j * 2 + i].p1.y = (j + 1) * ivs_param.frameInfo.height /* / 2 */ - 1;
 			HAPLogDebug(&logObject,"(%d,%d) = ((%d,%d)-(%d,%d))", i, j, ivs_param.roiRect[j * 2 + i].p0.x, ivs_param.roiRect[j * 2 + i].p0.y,ivs_param.roiRect[j * 2 + i].p1.x, ivs_param.roiRect[j * 2 + i].p1.y);
 		  }
 		  else
-		    {
-		      	ivs_param.roiRect[j * 2 + i].p0.x = 0;//ivs_param.roiRect[0].p0.x;
-			ivs_param.roiRect[j * 2 + i].p0.y = 0;//ivs_param.roiRect[0].p0.y;
-			ivs_param.roiRect[j * 2 + i].p1.x = 0;//ivs_param.roiRect[0].p1.x;;
-			ivs_param.roiRect[j * 2 + i].p1.y = 0;//ivs_param.roiRect[0].p1.y;;
-			HAPLogDebug(&logObject,"(%d,%d) = ((%d,%d)-(%d,%d))", i, j, ivs_param.roiRect[j * 2 + i].p0.x, ivs_param.roiRect[j * 2 + i].p0.y,ivs_param.roiRect[j * 2 + i].p1.x, ivs_param.roiRect[j * 2 + i].p1.y);
-		    }
+			{
+				ivs_param.roiRect[j * 2 + i].p0.x = 0;//ivs_param.roiRect[0].p0.x;
+				ivs_param.roiRect[j * 2 + i].p0.y = 0;//ivs_param.roiRect[0].p0.y;
+				ivs_param.roiRect[j * 2 + i].p1.x = 0;//ivs_param.roiRect[0].p1.x;;
+				ivs_param.roiRect[j * 2 + i].p1.y = 0;//ivs_param.roiRect[0].p1.y;;
+				HAPLogDebug(&logObject,"(%d,%d) = ((%d,%d)-(%d,%d))", i, j, ivs_param.roiRect[j * 2 + i].p0.x, ivs_param.roiRect[j * 2 + i].p0.y,ivs_param.roiRect[j * 2 + i].p1.x, ivs_param.roiRect[j * 2 + i].p1.y);
+			}
 		}
 	}
 	ivs_interface = IMP_IVS_CreateMoveInterface(&ivs_param);
@@ -1089,15 +1089,17 @@ int initVideoPipeline(){
 //		HAPLogError(&logObject, "Create ChnNum%d get_srtp_video_stream failed", (/*chn_num*/ 0 ));
 //	}
 
-	pthread_t hksv_tid;
 
-	HAPLogInfo(&logObject, "Starting hksv capture thread ");
-	arg = (((IMP_ENC_PROFILE_AVC_MAIN >> 24) << 16) | (/*chn_num*/ 1));
-	// TODO: in the future, change this to a hskv specific processing thread
-	ret = pthread_create(&hksv_tid, NULL, get_srtp_video_stream, (void *)arg);
-	if (ret < 0) {
-		HAPLogError(&logObject, "Create ChnNum%d get_srtp_video_stream failed", (/*chn_num*/ 1 ));
-	}
+// moving this to POSRecordingController
+//	pthread_t hksv_tid;
+//
+//	HAPLogInfo(&logObject, "Starting hksv capture thread ");
+//	arg = (((IMP_ENC_PROFILE_AVC_MAIN >> 24) << 16) | (/*chn_num*/ 1));
+//	// TODO: in the future, change this to a hskv specific processing thread
+//	ret = pthread_create(&hksv_tid, NULL, get_srtp_video_stream, (void *)arg);
+//	if (ret < 0) {
+//		HAPLogError(&logObject, "Create ChnNum%d get_srtp_video_stream failed", (/*chn_num*/ 1 ));
+//	}
 
 	pthread_t jpeg_tid;
 
@@ -1106,14 +1108,14 @@ int initVideoPipeline(){
 	// TODO: in the future, change this to a jpeg specific processing thread
 	ret = pthread_create(&jpeg_tid, NULL, get_jpeg_stream, (void *)arg);
 	if (ret < 0) {
-		HAPLogError(&logObject, "Create ChnNum%d get_srtp_video_stream failed", (/*chn_num*/ 2 ));
+		HAPLogError(&logObject, "Create ChnNum%d get_jpeg_stream failed", (/*chn_num*/ 2 ));
 	}
 
 
 	// start thread for activating night mode & IR cut filter
 	HAPLogInfo(&logObject, "Starting thread for activating night mode & IR cut filter ");
 	pthread_t thread_info;
-	pthread_create(&thread_info, NULL, sample_soft_photosensitive_ctrl, NULL);
+	pthread_create(&thread_info, NULL, sample_soft_photosensitive_ctrl, (void *)accessoryConfiguration);
 	if (ret < 0) {
 		HAPLogError(&logObject, "Failed to start thread for activating night mode & IR cut filter");
 	}

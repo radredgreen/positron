@@ -4,11 +4,15 @@
 // you may not use this file except in compliance with the License.
 // See [CONTRIBUTORS.md] for the list of HomeKit ADK project authors.
 
-#include "App.h"
-#include "DB.h"
-
 #include <pthread.h>
 #include <sys/prctl.h>
+#include <stdio.h>
+#include <string.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <unistd.h>
+#include <fcntl.h>
+#include <signal.h>
 
 #include "HAP.h"
 #include "HAPPlatform+Init.h"
@@ -22,13 +26,10 @@
 #include "HAPPlatformServiceDiscovery+Init.h"
 #include "HAPPlatformTCPStreamManager+Init.h"
 #endif
-#include <stdio.h>
-#include <string.h>
-#include <sys/types.h>
-#include <sys/stat.h>
-#include <fcntl.h>
 
-#include <signal.h>
+#include "App.h"
+#include "DB.h"
+
 static bool requestedFactoryReset = false;
 static bool clearPairings = false;
 

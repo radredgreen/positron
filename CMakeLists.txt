@@ -189,6 +189,7 @@ set (LOG_LEVEL_Release 0)
 
 add_definitions(-DHAP_LOG_LEVEL=${LOG_LEVEL_Debug})
 add_definitions(-DIP=1)
+add_definitions(-Werror)
 
 ######################
 # Target Executables #

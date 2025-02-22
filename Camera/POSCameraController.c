@@ -15,23 +15,25 @@
  * along with this program. If not, see <http://www.gnu.org/licenses/>.
  */
 
-#include "HAP.h"
-#include "HAPBase.h"
-
-#include "App_Camera.h"
-#include "App.h"
-#include "DB.h"
-#include <arpa/inet.h>
-#include "util_base64.h"
-#include <HAP.h>
-#include <HAP+Internal.h>
+#include <bits/time.h>
+#include <signal.h> // pthread kill
 #include <math.h>
 #include <string.h>
 #include <errno.h>
 #include <pthread.h>
 #include <sys/prctl.h>
+#include <arpa/inet.h>
 
-#include <signal.h> // pthread kill
+#include "HAP.h"
+#include "HAPBase.h"
+#include <HAP.h>
+#include <HAP+Internal.h>
+
+#include "App_Camera.h"
+#include "App.h"
+#include "DB.h"
+#include "util_base64.h"
+
 
 #include "POSCameraController.h"
 #include "POSRTPController.h"
@@ -52,10 +54,9 @@
 #include "aacenc_lib.h"
 #include "aacdecoder_lib.h"
 
-#include "POSRingBuffer.h"
+#include "POSRingBufferAudioOut.h"
 
 //#define MUTE_ALL_SOUND
-
 extern AccessoryConfiguration accessoryConfiguration;
 
 static const HAPLogObject logObject = {.subsystem = kHAP_LogSubsystem, .category = "POSCameraController"};
@@ -81,36 +82,39 @@ static void HandleIVSMotionCallback(
   // run in the hap loop
   HAPAssert(context);
   HAPAssert(contextSize == sizeof(int));
-
   int motion_param = *((int *)context);
 
-  switch (motion_param)
-  {
-  case 0:
-  {
-    accessoryConfiguration.state.motion.detected = false;
-  }
-  break;
-  case 1:
-  {
-    accessoryConfiguration.state.motion.detected = true;
-  }
-  break;
-  default:
-  {
-  }
-  break;
-  }
-  // rate limit to 1 second
-  if ((accessoryConfiguration.state.motion.detected != previousDetected) && (ActualTime() - (1 << 30) > lastMotionNotification))
-  {
-    previousDetected = accessoryConfiguration.state.motion.detected;
-    lastMotionNotification = ActualTime();
-    HAPAccessoryServerRaiseEvent(
-        accessoryConfiguration.server,
-        &motionDetectedCharacteristic,
-        &motionDetectService,
-        &accessory);
+  if(((motion_param == 1) && (ActualTime() - ((uint64_t)4 << (uint64_t)30)) > lastMotionNotification) || 
+     ((motion_param == 0) && (ActualTime() - ((uint64_t)2 << (uint64_t)30)) > lastMotionNotification) ){
+
+
+    switch (motion_param)
+    {
+      case 0:
+      {
+        accessoryConfiguration.state.motion.detected = false;
+        break;
+      }
+      case 1:
+      {
+        if(accessoryConfiguration.state.motion.active)
+        accessoryConfiguration.state.motion.detected = true;
+        break;
+      }
+      default:
+        break;
+    }
+    // rate limit to 4 seconds
+    if (accessoryConfiguration.state.motion.detected != previousDetected) 
+    {
+      previousDetected = accessoryConfiguration.state.motion.detected;
+      lastMotionNotification = ActualTime();
+      HAPAccessoryServerRaiseEvent(
+          accessoryConfiguration.server,
+          &motionDetectedCharacteristic,
+          &motionDetectService,
+          &accessory);
+    }
   }
 }
 
@@ -283,7 +287,6 @@ static void *srtp_video_feedback(void *context)
     if (numPacketBytes)
     {
       ret = send(sock, packet, numPacketBytes, 0);
-      ;
       if (ret != numPacketBytes)
       {
         HAPLogError(&logObject, "Tried to send %d bytes, but send only sent %d", numPacketBytes, ret);
@@ -302,7 +305,7 @@ static void *srtp_video_feedback(void *context)
     if (newKeyFrame)
     {
       HAPLogInfo(&logObject, "RTCP requested new keyframe");
-      ret = IMP_Encoder_RequestIDR(myContext->session.videoThread.chn_num);
+      ret = IMP_Encoder_RequestIDR(chnNum);
       if (ret < 0)
       {
         HAPLogError(&logObject, "IMP_Encoder_RequestIDR(%d) failed", chnNum);
@@ -331,14 +334,12 @@ static void *srtp_video_feedback(void *context)
 // todo, move this function to a file dedicated to the video stream
 static void *get_srtp_video_stream(void *context)
 {
-#if 1
   //  HAPLogError(&logObject, "In capture thread.");
   int val, i, chnNum, ret, sock;
 
   AccessoryContext *myContext = context;
 
   sock = myContext->session.videoThread.socket;
-
   chnNum = myContext->session.videoThread.chn_num;
 
   prctl(PR_SET_NAME, "pos_srtp_vid");
@@ -358,6 +359,14 @@ static void *get_srtp_video_stream(void *context)
     if (ret < 0)
     {
       HAPLogError(&logObject, "IMP_Encoder_PollingStream(%d) timeout", chnNum);
+      // try to recover after a stream reconfigure
+      ret = IMP_Encoder_StartRecvPic(chnNum);
+      if (ret < 0)
+      {
+        HAPLogError(&logObject, "IMP_Encoder_StartRecvPic(%d) failed", chnNum);
+        return ((void *)-1);
+      }
+
       continue;
     }
 
@@ -437,7 +446,6 @@ static void *get_srtp_video_stream(void *context)
         myContext->session.audioThread.threadStop = 1;
         myContext->session.audioFeedbackThread.threadStop = 1;
 
-        //printf("accessoryConfiguration.state.streaming address in get_srtp_video_stream: %p\n", &accessoryConfiguration.state.streaming);
         accessoryConfiguration.state.streaming = kHAPCharacteristicValue_StreamingStatus_Available;
         myContext->session.status = kHAPCharacteristicValue_StreamingStatus_Available;
       }
@@ -474,7 +482,7 @@ static void *get_srtp_video_stream(void *context)
 
     IMP_Encoder_ReleaseStream(chnNum, &ImpEncStream);
   }
-  HAPLogError(&logObject, "IMP_Encoder_StopRecvPic");
+  HAPLogInfo(&logObject, "IMP_Encoder_StopRecvPic");
 
   ret = IMP_Encoder_StopRecvPic(chnNum);
   if (ret < 0)
@@ -483,12 +491,11 @@ static void *get_srtp_video_stream(void *context)
     return ((void *)-1);
   }
 
-  HAPLogError(&logObject, "Exiting capture thread.");
+  HAPLogInfo(&logObject, "Exiting capture thread.");
   return ((void *)0);
-#endif
 }
 
-ring_buffer_t ring_buffer;
+ring_buffer_ao_t ring_buffer_ao;
 void * ring_buffer_index_storage[128];
 uint8_t ring_buffer_storage[1024*128];
 pthread_mutex_t spkQueueMutex;
@@ -638,7 +645,7 @@ static void *srtp_audio_feedback(void *context)
               HAPLogError(&logObject, "the decoder didn't use bytes from the controller: %d", bytesNotUsed);
 
             INT_PCM timeData[1024];
-            aacErr = aacDecoder_DecodeFrame(hAacDec, &timeData, 1024, 0);
+            aacErr = aacDecoder_DecodeFrame(hAacDec, (INT_PCM *) &timeData, 1024, 0);
             if (aacErr != AACENC_OK)
             {
               HAPLogError(&logObject, "aacDecoder_DecodeFrame err: %d", aacErr);
@@ -671,8 +678,8 @@ static void *srtp_audio_feedback(void *context)
             pthread_mutex_lock(&spkQueueMutex);
 
             //Push new data to the queue
-            memcpy(&ring_buffer_storage[ring_buffer.head_index*1024], &timeData, 1024);
-            ptr_ring_buffer_queue(&ring_buffer, &ring_buffer_storage[ring_buffer.head_index*1024]);
+            memcpy(&ring_buffer_storage[ring_buffer_ao.head_index*1024], &timeData, 1024);
+            ptr_ring_buffer_ao_queue(&ring_buffer_ao, &ring_buffer_storage[ring_buffer_ao.head_index*1024]);
 
             //Signal the condition variable that new data is available in the queue
             pthread_cond_signal(&spkQueueCond);
@@ -723,7 +730,7 @@ static void *srtp_audio_feedback(void *context)
   //return NULL;
 }
 
-pthread_t speaker_pthread = NULL;
+pthread_t speaker_pthread = (pthread_t) NULL;
 static void *speaker_thread(void *context)
 {
   AccessoryContext *myContext = context;
@@ -822,7 +829,7 @@ static void *speaker_thread(void *context)
     pthread_mutex_lock(&spkQueueMutex);
 
     //As long as the queue is empty,
-    while(ptr_ring_buffer_is_empty(&ring_buffer)) {
+    while(ptr_ring_buffer_ao_is_empty(&ring_buffer_ao)) {
         // - wait for the condition variable to be signalled
         //Note: This call unlocks the mutex when called and
         //relocks it before returning!
@@ -833,7 +840,7 @@ static void *speaker_thread(void *context)
 
     uint8_t timeData[960];
     uint8_t * ptr_new_data;
-    ptr_ring_buffer_dequeue(&ring_buffer, &ptr_new_data);
+    ptr_ring_buffer_ao_dequeue(&ring_buffer_ao, (void **)&ptr_new_data);
     memcpy(&timeData, ptr_new_data, 960); // this will be a pointer in ring_buffer_storage
     
     //Now unlock the mutex
@@ -1172,7 +1179,7 @@ static void *get_srtp_audio_stream(void *context)
       ibuf.numBufs = 1;
       ibuf.bufs = (void **)&frm.virAddr;
       ibuf.bufferIdentifiers = &iidentify;
-      ibuf.bufSizes = frm.len;
+      ibuf.bufSizes = &frm.len;
       uint32_t ibufElSizes = 2; // 16bits
       ibuf.bufElSizes = &ibufElSizes;
 
@@ -1213,7 +1220,7 @@ static void *get_srtp_audio_stream(void *context)
         POSRTPStreamPushPayload(
             &myContext->session.rtpAudioStream,
             (void *)(&aacData),
-            oargs.numOutBytes + 4, // + 4 for header
+            oargs.numOutBytes + 4, // + 4 for header // TODO, is this +4 correct?
             &numPayloadBytes,
             frm.timeStamp * 1000, // us to ns conversion (checked)
             ActualTime());
@@ -1280,8 +1287,17 @@ void StreamContextInitialize(AccessoryContext *context)
 {
   HAPLogDebug(&kHAPLog_Default, "Initializing streaming context.");
   AccessoryContext *myContext = context;
-  myContext->session.videoThread.thread = NULL;
-  myContext->session.videoFeedbackThread.thread = NULL;
+
+  memset(myContext->session.sessionId, 0, UUIDLENGTH);
+  myContext->session.status = kHAPCharacteristicValue_StreamingStatus_Available;
+
+  HAPPlatformRandomNumberFill((void *) &myContext->session.ssrcVideo , 4);
+  do{
+      HAPPlatformRandomNumberFill((void *) &myContext->session.ssrcAudio , 4);
+  } while( myContext->session.ssrcVideo == myContext->session.ssrcAudio );
+
+  myContext->session.videoThread.thread = (pthread_t) NULL;
+  myContext->session.videoFeedbackThread.thread = (pthread_t) NULL;
   myContext->session.status = kHAPCharacteristicValue_StreamingStatus_Available;
   accessoryConfiguration.state.streaming = kHAPCharacteristicValue_StreamingStatus_Available;
 }
@@ -1296,7 +1312,7 @@ void StreamContextDeintialize(AccessoryContext *context)
 #define kHAPRTPProfileMain 1
 #define kHAPRTPProfileHigh 2
 
-void *posStartStream(AccessoryContext *context HAP_UNUSED)
+void posStartStream(AccessoryContext *context)
 {
   int ret;
   HAPLogInfo(&logObject, "posStartStream");
@@ -1325,8 +1341,8 @@ void *posStartStream(AccessoryContext *context HAP_UNUSED)
               myContext->session.videoParameters.codecConfig.videoAttributes.imageHeight);
   HAPLogDebug(&kHAPLog_Default, "myContext->session.videoParameters.codecConfig.videoAttributes.frameRate: %d",
               myContext->session.videoParameters.codecConfig.videoAttributes.frameRate);
-  HAPLogDebug(&kHAPLog_Default, "myContext->session.videoParameters.vRtpParameters.vRtpParameters.maximumBitrate: %d",
-              myContext->session.videoParameters.vRtpParameters.vRtpParameters.maximumBitrate);
+  HAPLogDebug(&kHAPLog_Default, "myContext->session.videoParameters.vRtpParameters.maximumBitrate: %d",
+              myContext->session.videoParameters.vRtpParameters.maximumBitrate);
 
   // todo, move setting up the encoder to the video thread
   // setup encoder
@@ -1337,7 +1353,7 @@ void *posStartStream(AccessoryContext *context HAP_UNUSED)
   // 0 - non interleaved, not using
   myContext->session.videoParameters.codecConfig.videoCodecParams.packetizationMode;
 
-  // 3.1, 3.2, 4 - not sure what to do with this... not passing to encoder
+  // 0-3.1, 1-3.2, 2-4 - not sure what to do with this... not passing to encoder
   myContext->session.videoParameters.codecConfig.videoCodecParams.level;
 
   // 0 - h264, the onlyone supported in the docs, TODO experiment with 1 which might be H265 HEVC
@@ -1363,14 +1379,14 @@ void *posStartStream(AccessoryContext *context HAP_UNUSED)
   if (ret < 0)
   {
     HAPLogError(&logObject, "IMP_Encoder_RegisterChn(%d, %d) error: %d", 0, 0, ret);
-    return NULL;
+    return;
   }
 
   ret = IMP_Encoder_DestroyChn(/*encChn*/ 0);
   if (ret < 0)
   {
     HAPLogError(&logObject, "IMP_Encoder_CreateChn(%d) error !", 0);
-    return NULL;
+    return;
   }
   
   // vRtpParameters.maximumBitrate is in kbps, but imp wants bps
@@ -1384,24 +1400,24 @@ void *posStartStream(AccessoryContext *context HAP_UNUSED)
                                     myContext->session.videoParameters.codecConfig.videoAttributes.frameRate * 2 / 1, // GOP length (2 secc)
                                     2,                                                                                // uMaxSameSenceCnt ??
                                     (S_RC_METHOD == IMP_ENC_RC_MODE_FIXQP) ? 35 : -1,                                 // iInitialQP
-                                    myContext->session.videoParameters.vRtpParameters.vRtpParameters.maximumBitrate); // uTargetBitRate (seems to be kbps)
+                                    myContext->session.videoParameters.vRtpParameters.maximumBitrate); // uTargetBitRate (seems to be kbps)
   if (ret < 0)
   {
     HAPLogError(&logObject, "IMP_Encoder_SetDefaultParam(%d) error !", 0);
-    return NULL;
+    return;
   }
   ret = IMP_Encoder_CreateChn(/*encChn*/ 0, &enc0_channel0_attr);
   if (ret < 0)
   {
     HAPLogError(&logObject, "IMP_Encoder_CreateChn(%d) error !", 0);
-    return NULL;
+    return;
   }
 
   ret = IMP_Encoder_RegisterChn(0 /* encGroup */, 0 /* encChn */);
   if (ret < 0)
   {
     HAPLogError(&logObject, "IMP_Encoder_RegisterChn(%d, %d) error: %d", 0, 0, ret);
-    return NULL;
+    return;
   }
   
   // setup rtpcontroller
@@ -1410,22 +1426,22 @@ void *posStartStream(AccessoryContext *context HAP_UNUSED)
               myContext->session.ssrcVideo);
   HAPLogDebug(&kHAPLog_Default, "myContext->session.videoParameters.vRtpParameters.maxMTU: %d",
               myContext->session.videoParameters.vRtpParameters.maxMTU);
-  HAPLogDebug(&kHAPLog_Default, "myContext->session.videoParameters.vRtpParameters.vRtpParameters.maximumBitrate: %d",
-              myContext->session.videoParameters.vRtpParameters.vRtpParameters.maximumBitrate);
-  HAPLogDebug(&kHAPLog_Default, "myContext->session.videoParameters.vRtpParameters.vRtpParameters.minRTCPinterval: %d",
-              myContext->session.videoParameters.vRtpParameters.vRtpParameters.minRTCPinterval);
-  HAPLogDebug(&kHAPLog_Default, "myContext->session.videoParameters.vRtpParameters.vRtpParameters.payloadType: %d",
-              myContext->session.videoParameters.vRtpParameters.vRtpParameters.payloadType);
-  HAPLogDebug(&kHAPLog_Default, "myContext->session.videoParameters.vRtpParameters.vRtpParameters.ssrc: %d",
-              myContext->session.videoParameters.vRtpParameters.vRtpParameters.ssrc);
+  HAPLogDebug(&kHAPLog_Default, "myContext->session.videoParameters.vRtpParameters.maximumBitrate: %d",
+              myContext->session.videoParameters.vRtpParameters.maximumBitrate);
+  HAPLogDebug(&kHAPLog_Default, "myContext->session.videoParameters.vRtpParameters.minRTCPinterval: %d",
+              myContext->session.videoParameters.vRtpParameters.minRTCPinterval);
+  HAPLogDebug(&kHAPLog_Default, "myContext->session.videoParameters.vRtpParameters.payloadType: %d",
+              myContext->session.videoParameters.vRtpParameters.payloadType);
+  HAPLogDebug(&kHAPLog_Default, "myContext->session.videoParameters.vRtpParameters.ssrc: %d",
+              myContext->session.videoParameters.vRtpParameters.ssrc);
   
   // Could almost just pass .vRtpParameters into StreamStart
   POSRTPParameters videoRtpParameters;
-  videoRtpParameters.maxBitRate = myContext->session.videoParameters.vRtpParameters.vRtpParameters.maximumBitrate << 10;
+  videoRtpParameters.maxBitRate = myContext->session.videoParameters.vRtpParameters.maximumBitrate << 10;
   videoRtpParameters.maximumMTU = myContext->session.videoParameters.vRtpParameters.maxMTU;
-  videoRtpParameters.RTCPInterval = myContext->session.videoParameters.vRtpParameters.vRtpParameters.minRTCPinterval;
-  videoRtpParameters.ssrc = myContext->session.videoParameters.vRtpParameters.vRtpParameters.ssrc;
-  videoRtpParameters.type = myContext->session.videoParameters.vRtpParameters.vRtpParameters.payloadType;
+  videoRtpParameters.RTCPInterval = myContext->session.videoParameters.vRtpParameters.minRTCPinterval;
+  videoRtpParameters.ssrc = myContext->session.videoParameters.vRtpParameters.ssrc;
+  videoRtpParameters.type = myContext->session.videoParameters.vRtpParameters.payloadType;
 
   POSSRTPParameters videoOutSrtpParameters;
   memset(&videoOutSrtpParameters, 0, sizeof(videoOutSrtpParameters));
@@ -1475,7 +1491,7 @@ void *posStartStream(AccessoryContext *context HAP_UNUSED)
                     90000, // rfc6184 90khz clock
                     myContext->session.ssrcVideo,
                     ActualTime(),
-                    &cnameString,
+                    (char *) &cnameString,
                     &videoInSrtpParameters,
                     &videoOutSrtpParameters);
 
@@ -1483,14 +1499,14 @@ void *posStartStream(AccessoryContext *context HAP_UNUSED)
   if (ret < 0)
   {
     HAPLogError(&logObject, "IMP_Encoder_FlushStream(%d) error: %d", 0, ret);
-    return NULL;
+    return;
   }
 
   ret = IMP_FrameSource_EnableChn(1);
   if (ret < 0)
   {
     HAPLogError(&logObject, "IMP_FrameSource_EnableChn(%d) error: %d", 1, ret);
-    return NULL;
+    return;
   }
 
   // pass to video thread
@@ -1499,7 +1515,6 @@ void *posStartStream(AccessoryContext *context HAP_UNUSED)
   myContext->session.videoThread.chn_num = 0;
 
   HAPLogInfo(&logObject, "Starting srtp video capture thread");
-  //(((myContext->session.videoStream.socket) << 16) | (/*chn_num*/ 0)); // this is a little silly, should pass a stucture of some kind
   ret = pthread_create(&myContext->session.videoThread.thread, NULL, get_srtp_video_stream, (void *)context);
   if (ret < 0)
   {
@@ -1563,7 +1578,7 @@ void *posStartStream(AccessoryContext *context HAP_UNUSED)
                     POS_AUDIO_OUTPUT_SAMPLE_RATE,
                     myContext->session.ssrcAudio,
                     ActualTime(),
-                    &cnameString,
+                    (char *) &cnameString,
                     &audioInSrtpParameters,
                     &audioOutSrtpParameters);
 
@@ -1574,7 +1589,6 @@ void *posStartStream(AccessoryContext *context HAP_UNUSED)
 
 #ifndef MUTE_ALL_SOUND
   HAPLogInfo(&logObject, "Starting srtp audio capture thread");
-  //(((myContext->session.audioStream.socket) << 16) | (/*chn_num*/ 0)); // this is a little silly, should pass a stucture of some kind
   ret = pthread_create(&myContext->session.audioThread.thread, NULL, get_srtp_audio_stream, (void *)context);
   if (ret < 0)
   {
@@ -1590,7 +1604,7 @@ void *posStartStream(AccessoryContext *context HAP_UNUSED)
   pthread_cond_init(&spkQueueCond, NULL);
 
   //Initialize the speaker ring buffer
-  ptr_ring_buffer_init(&ring_buffer,&ring_buffer_index_storage, 128);
+  ptr_ring_buffer_ao_init(&ring_buffer_ao,&ring_buffer_index_storage, 128);
   HAPLogInfo(&logObject, "Starting srtp audio feedback thread");
   ret = pthread_create(&myContext->session.audioFeedbackThread.thread, NULL, srtp_audio_feedback, (void *)context);
   if (ret < 0)
@@ -1598,7 +1612,7 @@ void *posStartStream(AccessoryContext *context HAP_UNUSED)
     HAPLogError(&logObject, "Create ChnNum%d get_srtp_audio_stream failed", (/*chn_num*/ 0));
   }
   HAPLogInfo(&logObject, "Starting speaker thread");
-  if (speaker_pthread == NULL){
+  if (speaker_pthread == (pthread_t) NULL){
     ret = pthread_create(&speaker_pthread, NULL, speaker_thread, (void *)context);
   } 
   if (ret < 0)
@@ -1608,8 +1622,14 @@ void *posStartStream(AccessoryContext *context HAP_UNUSED)
 #endif
 }
 
-void *posStopStream(AccessoryContext *context HAP_UNUSED)
+void posStopStream(AccessoryContext *context HAP_UNUSED)
 {
+
+  // 0115
+  //   0201 command
+  //     00 stop
+  //   0110
+  //     d04c7efc4091486ba51852c4a9ad5d98 uuid
   int ret;
   AccessoryContext *myContext = context;
   myContext->session.videoThread.threadStop = 1;
@@ -1619,7 +1639,7 @@ void *posStopStream(AccessoryContext *context HAP_UNUSED)
 
   HAPLogInfo(&logObject, "Joining srtp capture thread ");
 
-  if (myContext->session.videoThread.thread != NULL)
+  if (myContext->session.videoThread.thread != (pthread_t) NULL)
   {
     ret = pthread_join(myContext->session.videoThread.thread, NULL);
     if (ret < 0)
@@ -1630,7 +1650,7 @@ void *posStopStream(AccessoryContext *context HAP_UNUSED)
 
   HAPLogInfo(&logObject, "Joining srtp audio capture thread ");
 
-  if (myContext->session.audioThread.thread != NULL)
+  if (myContext->session.audioThread.thread != (pthread_t) NULL)
   {
     ret = pthread_join(myContext->session.audioThread.thread, NULL);
     if (ret < 0)
@@ -1659,7 +1679,7 @@ void *posStopStream(AccessoryContext *context HAP_UNUSED)
 
   // work around since select isn't working in the feeback thread
   HAPLogInfo(&logObject, "Killing video srtp feedback thread ");
-  if (myContext->session.videoFeedbackThread.thread != NULL)
+  if (myContext->session.videoFeedbackThread.thread != (pthread_t) NULL)
   {
     ret = pthread_kill(myContext->session.videoFeedbackThread.thread, 0);
     if (ret < 0)
@@ -1670,7 +1690,7 @@ void *posStopStream(AccessoryContext *context HAP_UNUSED)
 #ifndef MUTE_ALL_SOUND
   // work around since select isn't working in the feeback thread
   HAPLogInfo(&logObject, "Killing audio srtp feedback thread ");
-  if (myContext->session.audioFeedbackThread.thread != NULL)
+  if (myContext->session.audioFeedbackThread.thread != (pthread_t) NULL)
   {
     ret = pthread_kill(myContext->session.audioFeedbackThread.thread, 0);
     if (ret < 0)
@@ -1680,7 +1700,7 @@ void *posStopStream(AccessoryContext *context HAP_UNUSED)
   }
 
   HAPLogInfo(&logObject, "Killing speaker thread ");
-  if (speaker_pthread != NULL)
+  if (speaker_pthread != (pthread_t) NULL)
   {
     ret = pthread_kill(speaker_pthread, 0);
     if (ret < 0)
@@ -1697,19 +1717,130 @@ void *posStopStream(AccessoryContext *context HAP_UNUSED)
   #endif
 }
 
-void *posReconfigureStream(AccessoryContext *context HAP_UNUSED)
+void posReconfigureStream(AccessoryContext *context HAP_UNUSED)
 {
-  // WORKAROUND ( IGNORING RECONFIGURATION )
-  //  	HAPLogInfo(&logObject, "posReconfigureStream");
-  HAPLogError(&logObject, "Ignoring reconfigure command - Don't know how to parse partial TLVs yet.");
+  int ret;
+  AccessoryContext *myContext = context;
+
+  HAPLogInfo(&logObject, "posReconfigureStream");
+  
+  HAPLogDebug(&kHAPLog_Default, "myContext->session.videoParameters.codecConfig.videoCodecParams.CVOEnabled: %d",
+              myContext->session.videoParameters.codecConfig.videoCodecParams.CVOEnabled);
+  HAPLogDebug(&kHAPLog_Default, "myContext->session.videoParameters.codecConfig.videoCodecParams.packetizationMode: %d",
+              myContext->session.videoParameters.codecConfig.videoCodecParams.packetizationMode);
+  HAPLogDebug(&kHAPLog_Default, "myContext->session.videoParameters.codecConfig.videoCodecParams.level: %d",
+              myContext->session.videoParameters.codecConfig.videoCodecParams.level);
+  HAPLogDebug(&kHAPLog_Default, "myContext->session.videoParameters.codecConfig.videoCodecType: %d",
+              myContext->session.videoParameters.codecConfig.videoCodecType);
+  HAPLogDebug(&kHAPLog_Default, "myContext->session.videoParameters.codecConfig.videoCodecParams.profileID: %d",
+              myContext->session.videoParameters.codecConfig.videoCodecParams.profileID);
+  HAPLogDebug(&kHAPLog_Default, "myContext->session.videoParameters.codecConfig.videoAttributes.imageWidth: %d",
+              myContext->session.videoParameters.codecConfig.videoAttributes.imageWidth);
+  HAPLogDebug(&kHAPLog_Default, "myContext->session.videoParameters.codecConfig.videoAttributes.imageHeight: %d",
+              myContext->session.videoParameters.codecConfig.videoAttributes.imageHeight);
+  HAPLogDebug(&kHAPLog_Default, "myContext->session.videoParameters.codecConfig.videoAttributes.frameRate: %d",
+              myContext->session.videoParameters.codecConfig.videoAttributes.frameRate);
+  HAPLogDebug(&kHAPLog_Default, "myContext->session.videoParameters.vRtpParameters.maximumBitrate: %d",
+              myContext->session.videoParameters.vRtpParameters.maximumBitrate);
+
   // Example (base64): ARUCAQQBEHOaCxibNkonjz4Gk2lOW7YCGQMLAQKAAgICaAEDAR4ECgMChAAEBAAAAAA=
-  // (hex): 01150201040110739a0b189b364a278f3e0693694e5bb60219030b010280020202680103011e040a03028400040400000000
-  // Not doing this for now.  need to get partial TLV updates to work for this
-  //    posStopStream(context);
-  //    posStartStream(context);
+  // (hex): 
+  // 0115
+  //    0201  command
+  //      04  reconfigure
+  //    0110  session uuid
+  //      739a0b189b364a278f3e0693694e5bb6
+  // 0219 selected video params
+  //   030b  video attributes
+  //     0102  width
+  //       8002  640
+  //     0202 height
+  //       6801 360
+  //     0301 framerate
+  //       1e 30
+  //     040a  selected video rtp params
+  //       0302 bitrate
+  //         8400 132
+  //       0404
+  //         00000000 rtcp interval
+
+
+  ret = IMP_FrameSource_DisableChn(1);
+  if (ret < 0)
+  {
+    HAPLogError(&logObject, "IMP_FrameSource_DisableChn(%d) error: %d", 1, ret);
+    return;
+  }
+
+  static const IMPEncoderRcMode S_RC_METHOD = IMP_ENC_RC_MODE_CBR; // IMP_ENC_RC_MODE_CAPPED_VBR; //IMP_ENC_RC_MODE_FIXQP; //IMP_ENC_RC_MODE_CAPPED_QUALITY;
+
+  // avc baseline, main and high are all supported by t31 as well as hevc main (not used)
+  IMPEncoderProfile encoderProfile = IMP_ENC_PROFILE_AVC_BASELINE;
+  if (myContext->session.videoParameters.codecConfig.videoCodecParams.profileID == kHAPRTPProfileHigh)
+  {
+    encoderProfile = IMP_ENC_PROFILE_AVC_HIGH;
+  }
+  else
+  {
+    if (myContext->session.videoParameters.codecConfig.videoCodecParams.profileID == kHAPRTPProfileMain)
+      encoderProfile = IMP_ENC_PROFILE_AVC_MAIN;
+  }
+
+  IMPEncoderChnAttr enc0_channel0_attr;
+
+  // vRtpParameters.maximumBitrate is in kbps, but imp wants bps
+  ret = IMP_Encoder_SetDefaultParam(&enc0_channel0_attr,
+                                    encoderProfile,
+                                    S_RC_METHOD,
+                                    myContext->session.videoParameters.codecConfig.videoAttributes.imageWidth,
+                                    myContext->session.videoParameters.codecConfig.videoAttributes.imageHeight,
+                                    myContext->session.videoParameters.codecConfig.videoAttributes.frameRate,
+                                    1,
+                                    myContext->session.videoParameters.codecConfig.videoAttributes.frameRate * 2 / 1, // GOP length (2 secc)
+                                    2,                                                                                // uMaxSameSenceCnt ??
+                                    (S_RC_METHOD == IMP_ENC_RC_MODE_FIXQP) ? 35 : -1,                                 // iInitialQP
+                                    myContext->session.videoParameters.vRtpParameters.maximumBitrate); // uTargetBitRate (seems to be kbps)
+  if (ret < 0)
+  {
+    HAPLogError(&logObject, "IMP_Encoder_SetDefaultParam(%d) error !", 0);
+    return;
+  }
+
+  IMP_Encoder_FlushStream(0);
+  if (ret < 0)
+  {
+    HAPLogError(&logObject, "IMP_Encoder_FlushStream(%d) error: %d", 0, ret);
+    return;
+  }
+
+
+  // consider the the thread safety of this, 
+  // should this be moved into get_srtp_video_stream and signaled with a mutex?
+  // disabling the frame source should block the video thread
+  //trigger a new sps / pps send
+  // myContext->session.rtpVideoStream.SPSNALUNumBytes = 0;
+  // myContext->session.rtpVideoStream.PPSNALUNumBytes = 0;
+
+  //requesting a new IDR frame should be safer
+  //trigger a new sps / pps send
+  ret = IMP_Encoder_RequestIDR(myContext->session.videoThread.chn_num);
+  if (ret < 0)
+  {
+    HAPLogError(&logObject, "IMP_Encoder_RequestIDR(%d) failed", myContext->session.videoThread.chn_num);
+  }
+
+  ret = IMP_FrameSource_EnableChn(1);
+  if (ret < 0)
+  {
+    HAPLogError(&logObject, "IMP_FrameSource_EnableChn(%d) error: %d", 1, ret);
+    return;
+  }
+
+
+
 }
 
-void *posSuspendStream(AccessoryContext *context HAP_UNUSED)
+void posSuspendStream(AccessoryContext *context HAP_UNUSED)
 {
   HAPLogInfo(&logObject, "posSuspendStream");
   AccessoryContext *myContext = context;
@@ -1717,7 +1848,7 @@ void *posSuspendStream(AccessoryContext *context HAP_UNUSED)
   myContext->session.audioThread.threadPause = 1;
 }
 
-void *posResumeStream(AccessoryContext *context HAP_UNUSED)
+void posResumeStream(AccessoryContext *context HAP_UNUSED)
 {
   HAPLogInfo(&logObject, "posResumeStream");
   AccessoryContext *myContext = context;

@@ -1,8 +1,18 @@
-/*
- * App_Camera.h
+/* 
+ * This file is part of the positron distribution (https://github.com/radredgreen/positron).
+ * Copyright (c) 2024 RadRedGreen.
+ * 
+ * This program is free software: you can redistribute it and/or modify  
+ * it under the terms of the GNU General Public License as published by  
+ * the Free Software Foundation, version 3.
  *
- *  Created on: Dec 29, 2020
- *      Author: joe
+ * This program is distributed in the hope that it will be useful, but 
+ * WITHOUT ANY WARRANTY; without even the implied warranty of 
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU 
+ * General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License 
+ * along with this program. If not, see <http://www.gnu.org/licenses/>.
  */
 
 #ifndef APP_CAMERA_H
@@ -12,11 +22,10 @@
 extern "C" {
 #endif
 
-#include "HAP.h"
-// #include "HAPBase.h"
-#include "HAPTLV+Internal.h"
-
 #include <arpa/inet.h>
+
+#include "HAP.h"
+#include "HAPTLV+Internal.h"
 
 #include "POSRTPController.h"
 
@@ -124,35 +133,6 @@ HAPError HandleMotionDetectedRead(
         const HAPBoolCharacteristicReadRequest* request,
         bool* value,
         void* _Nullable context);
-/*
- * -------------------------------------------------------
- */
-
-/**
- * @file streaming.h
- * @author your name (you@domain.com)
- * @brief
- * @version 0.1
- * @date 2021-01-20
- *
- * @copyright Copyright (c) 2021
- *
- */
-
-// #ifndef STREAMING_H
-// #define STREAMING_H
-
-// #ifdef __cplusplus
-// extern "C" {
-// #endif
-
-// #include "HAP.h"
-// #include "HAPTLV+Internal.h"
-// #include <arpa/inet.h>
-
-// #if __has_feature(nullability)
-// #pragma clang assume_nonnull begin
-// #endif
 
 #define KEYLENGTH  32
 #define SALTLENGTH 14
@@ -189,6 +169,8 @@ typedef struct {
 } videoAttributesStruct;
 
 typedef struct {
+    bool videoCodecTypeIsSet;
+    bool videoCodecParamsIsSet;    
     uint8_t videoCodecType;
     videoCodecParamsStruct videoCodecParams;
     videoAttributesStruct videoAttributes;
@@ -216,17 +198,19 @@ HAP_ENUM_BEGIN(uint8_t, HAPCharacteristicValue_RTPCommand) { /** Inactive. */
 } HAP_ENUM_END(uint8_t, HAPCharacteristicValue_RTPCommand);
 
 typedef struct {
+    bool payloadTypeIsSet;
+    bool ssrcIsSet;
+    bool maximumBitrateIsSet;
+    bool minRTCPintervalIsSet;
+    bool maxMTUIsSet;
     uint8_t payloadType;      // type of video codec
     uint32_t ssrc;            // ssrc for video stream
     uint16_t maximumBitrate;  // in kbps and averaged over 1 sec
     uint32_t minRTCPinterval; // Minimum RTCP interval in seconds formatted as a 4 byte little endian ieee754 floating
                               // point value
+    uint16_t maxMTU; // MTU accessory must use to transmit video RTP packets  Only populated for non-default?? value.
 } rtpParameters;
 
-typedef struct {
-    rtpParameters vRtpParameters;
-    uint16_t maxMTU; // MTU accessory must use to transmit video RTP packets  Only populated for non-default?? value.
-} videoRtpParameters;
 
 typedef struct {
     rtpParameters rtpParameters;
@@ -237,7 +221,7 @@ typedef struct {
     // Selected video codec type?
     videoCodecConfigStruct codecConfig;  //codec parameters?
     // Selected video attributes?
-    videoRtpParameters vRtpParameters;
+    rtpParameters vRtpParameters;
 } selectedVideoParameters;
 
 typedef struct {
@@ -267,6 +251,8 @@ typedef struct {
     pthread_t thread;
 } POSStreamingThread;
 
+
+
 typedef struct {
     uint8_t sessionId[UUIDLENGTH];
     uint32_t setupWriteStatus;
@@ -288,36 +274,26 @@ typedef struct {
 } streamingSession;
 
 typedef struct {
+    bool sessionIdIsSet;
+    bool commandIsSet;
     uint8_t sessionId[UUIDLENGTH];
     HAPCharacteristicValue_RTPCommand command;
 } sessionControl;
 
 typedef struct {
+    bool videoParametersIsSet;
+    bool audioParametersIsSet;
     sessionControl control;
     selectedVideoParameters videoParameters;
     selectedAudioParameters audioParameters;
 } selectedRTPStruct;
 
-// HAPError handleSessionRead(HAPTLVWriterRef* responseWriter, streamingSession* session);
-
-// HAPError handleSessionWrite(HAPTLVReaderRef* responseReader, streamingSession* session);
 
 HAPError handleSelectedWrite(HAPTLVReaderRef* responseReader, selectedRTPStruct* selectedRTP);
-
-void checkFormats();
 
 HAPError handleAudioRead(HAPTLVWriterRef* responseWriter);
 HAPError handleVideoRead(HAPTLVWriterRef* responseWriter);
 
-// #if __has_feature(nullability)
-// #pragma clang assume_nonnull end
-// #endif
-
-// #ifdef __cplusplus
-// }
-// #endif
-
-// #endif /* STREAMING_H */
 
 #if __has_feature(nullability)
 #pragma clang assume_nonnull end

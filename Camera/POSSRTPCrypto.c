@@ -205,9 +205,9 @@ void hmac_sha1_aad(uint8_t *r, uint8_t *key, uint32_t key_len, uint8_t *in, uint
 }
 
 void srtp_authenticate(
-    const srtp_ctx *srtp_ctx,
+    srtp_ctx *srtp_ctx,
     uint8_t *tag,
-    const uint8_t *bytes,
+    uint8_t *bytes,
     uint32_t num_bytes,
     uint32_t index)
 {
@@ -218,7 +218,7 @@ void srtp_authenticate(
 //  hexDump("srtp_ctx->auth_key",&srtp_ctx->auth_key, 20, 16);
 
   store_bigendian(&beIndex, index);
-  hmac_sha1_aad(result, srtp_ctx->auth_key, 20, bytes, num_bytes, &beIndex, 4);
+  hmac_sha1_aad(result, srtp_ctx->auth_key, 20, bytes, num_bytes, (uint8_t *)&beIndex, 4);
   memcpy(tag, result, srtp_ctx->tag_size);
   return;
 }
@@ -231,7 +231,7 @@ int srtp_verifyAuthentication(srtp_ctx *srtp_ctx, uint8_t *tag, uint8_t *bytes, 
   uint32_t output;
   // printf("srtp_verifyAuthentication(srtp_ctx *srtp_ctx = %8x,uint8_t *tag = %8x,uint8_t *bytes = %8x,uint32_t num_bytes = %d,uint32_t index = %d)\n",srtp_ctx, tag, bytes, num_bytes, index);
   store_bigendian(&beIndex, index);
-  hmac_sha1_aad(result, srtp_ctx->auth_key, 20, bytes, num_bytes, &beIndex, 4);
+  hmac_sha1_aad(result, srtp_ctx->auth_key, 20, bytes, num_bytes, (uint8_t *)&beIndex, 4);
   output = 0 == memcmp(tag, result, srtp_ctx->tag_size);
   return (output);
 }

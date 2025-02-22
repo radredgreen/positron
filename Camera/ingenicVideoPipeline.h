@@ -15,5 +15,8 @@
  * along with this program. If not, see <http://www.gnu.org/licenses/>.
  */
 
+#include "App.h"
 
-int initVideoPipeline();
+int initVideoPipeline(AccessoryConfiguration *accessoryConfiguration);
+int set_flip(bool value);
+int set_red_led(bool enable);

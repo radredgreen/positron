@@ -34,11 +34,11 @@ extern "C" {
 
 void StreamContextInitialize(AccessoryContext* context);
 void StreamContextDeintialize(AccessoryContext* context); 
-void* posStartStream(AccessoryContext* context HAP_UNUSED);
-void* posStopStream(AccessoryContext* context HAP_UNUSED);
-void* posReconfigureStream(AccessoryContext* context HAP_UNUSED);
-void* posSuspendStream(AccessoryContext* context HAP_UNUSED) ;
-void* posResumeStream(AccessoryContext* context HAP_UNUSED) ;
+void posStartStream(AccessoryContext* context HAP_UNUSED);
+void posStopStream(AccessoryContext* context HAP_UNUSED);
+void posReconfigureStream(AccessoryContext* context HAP_UNUSED);
+void posSuspendStream(AccessoryContext* context HAP_UNUSED) ;
+void posResumeStream(AccessoryContext* context HAP_UNUSED) ;
 
 
 #if __has_feature(nullability)

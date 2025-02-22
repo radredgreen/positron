@@ -25,8 +25,9 @@
  * Credit: https://github.com/AndersKaloer/Ring-Buffer
  */
 
-#ifndef SPKRINGBUFFER_H
-#define SPKRINGBUFFER_H
+
+#ifndef POSRINGBUFFER_H
+#define POSRINGBUFFER_H
 
 #ifdef __cplusplus
 extern "C"
@@ -47,7 +48,7 @@ extern "C"
  * The type which is used to hold the size
  * and the indicies of the buffer.
  */
-typedef size_t ring_buffer_size_t;
+typedef size_t ring_buffer_vi_size_t;
 
 /**
  * Used as a modulo operator
@@ -58,24 +59,41 @@ typedef size_t ring_buffer_size_t;
 #define RING_BUFFER_MASK(rb) (rb->buffer_mask)
 
 /**
- * Simplifies the use of <tt>struct ring_buffer_t</tt>.
+ * Simplifies the use of <tt>struct ring_buffer_vi_element_t</tt>.
  */
-typedef struct ring_buffer_t ring_buffer_t;
+typedef struct ring_buffer_vi_element_t ring_buffer_vi_element_t;
 
 /**
  * Structure which holds a ring buffer.
  * The buffer contains a buffer array
  * as well as metadata for the ring buffer.
  */
-struct ring_buffer_t {
+struct ring_buffer_vi_element_t {
+  void *loc;
+  size_t len;
+  uint64_t timestamp; //us
+  uint32_t dur; //ms
+};
+
+/**
+ * Simplifies the use of <tt>struct ring_buffer_vi_t</tt>.
+ */
+typedef struct ring_buffer_vi_t ring_buffer_vi_t;
+
+/**
+ * Structure which holds a ring buffer.
+ * The buffer contains a buffer array
+ * as well as metadata for the ring buffer.
+ */
+struct ring_buffer_vi_t {
   /** Buffer memory. */
-  void **buffer;
+  ring_buffer_vi_element_t *buffer;
   /** Buffer mask. */
-  ring_buffer_size_t buffer_mask;
+  ring_buffer_vi_size_t buffer_mask;
   /** Index of tail. */
-  ring_buffer_size_t tail_index;
+  ring_buffer_vi_size_t tail_index;
   /** Index of head. */
-  ring_buffer_size_t head_index;
+  ring_buffer_vi_size_t head_index;
 };
 
 /**
@@ -86,14 +104,14 @@ struct ring_buffer_t {
  * @param buf The buffer allocated for the ringbuffer.
  * @param buf_size The size of the allocated ringbuffer.
  */
-void ptr_ring_buffer_init(ring_buffer_t *buffer, void *buf, size_t buf_size);
+void ptr_ring_buffer_vi_init(ring_buffer_vi_t *buffer, ring_buffer_vi_element_t *buf, size_t buf_size);
 
 /**
  * Adds a byte to a ring buffer.
  * @param buffer The buffer in which the data should be placed.
  * @param data The byte to place.
  */
-void ptr_ring_buffer_queue(ring_buffer_t *buffer,  void * data);
+void ptr_ring_buffer_vi_queue(ring_buffer_vi_t *buffer,  ring_buffer_vi_element_t * data);
 
 /**
  * Returns the oldest byte in a ring buffer.
@@ -101,7 +119,7 @@ void ptr_ring_buffer_queue(ring_buffer_t *buffer,  void * data);
  * @param data A pointer to the location at which the data should be placed.
  * @return 1 if data was returned; 0 otherwise.
  */
-uint8_t ptr_ring_buffer_dequeue(ring_buffer_t *buffer, void ** data);
+uint8_t ptr_ring_buffer_vi_dequeue(ring_buffer_vi_t *buffer, ring_buffer_vi_element_t * data);
 
 /**
  * Peeks a ring buffer, i.e. returns an element without removing it.
@@ -110,7 +128,7 @@ uint8_t ptr_ring_buffer_dequeue(ring_buffer_t *buffer, void ** data);
  * @param index The index to peek.
  * @return 1 if data was returned; 0 otherwise.
  */
-uint8_t ptr_ring_buffer_peek(ring_buffer_t *buffer, void ** data, ring_buffer_size_t index);
+uint8_t ptr_ring_buffer_vi_peek(ring_buffer_vi_t *buffer, ring_buffer_vi_element_t * data, ring_buffer_vi_size_t index);
 
 
 /**
@@ -118,7 +136,7 @@ uint8_t ptr_ring_buffer_peek(ring_buffer_t *buffer, void ** data, ring_buffer_si
  * @param buffer The buffer for which it should be returned whether it is empty.
  * @return 1 if empty; 0 otherwise.
  */
-inline uint8_t ptr_ring_buffer_is_empty(ring_buffer_t *buffer) {
+inline uint8_t ptr_ring_buffer_vi_is_empty(ring_buffer_vi_t *buffer) {
   return (buffer->head_index == buffer->tail_index);
 }
 
@@ -127,7 +145,7 @@ inline uint8_t ptr_ring_buffer_is_empty(ring_buffer_t *buffer) {
  * @param buffer The buffer for which it should be returned whether it is full.
  * @return 1 if full; 0 otherwise.
  */
-inline uint8_t ptr_ring_buffer_is_full(ring_buffer_t *buffer) {
+inline uint8_t ptr_ring_buffer_vi_is_full(ring_buffer_vi_t *buffer) {
   return ((buffer->head_index - buffer->tail_index) & RING_BUFFER_MASK(buffer)) == RING_BUFFER_MASK(buffer);
 }
 
@@ -136,7 +154,7 @@ inline uint8_t ptr_ring_buffer_is_full(ring_buffer_t *buffer) {
  * @param buffer The buffer for which the number of items should be returned.
  * @return The number of items in the ring buffer.
  */
-inline ring_buffer_size_t ptr_ring_buffer_num_items(ring_buffer_t *buffer) {
+inline ring_buffer_vi_size_t ptr_ring_buffer_vi_num_items(ring_buffer_vi_t *buffer) {
   return ((buffer->head_index - buffer->tail_index) & RING_BUFFER_MASK(buffer));
 }
 
@@ -144,4 +162,4 @@ inline ring_buffer_size_t ptr_ring_buffer_num_items(ring_buffer_t *buffer) {
 }
 #endif
 
-#endif /* RINGBUFFER_H */
+#endif /* POSRINGBUFFER_H */

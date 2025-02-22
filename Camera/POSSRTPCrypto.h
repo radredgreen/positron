@@ -61,9 +61,9 @@ void hmac_sha1_aad
                uint32_t aad_len);
 
 void srtp_authenticate(
-    const srtp_ctx *srtp_ctx,
+    srtp_ctx *srtp_ctx,
     uint8_t *tag,
-    const uint8_t *bytes,
+    uint8_t *bytes,
     uint32_t num_bytes,
     uint32_t index);
 

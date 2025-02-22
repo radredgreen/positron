@@ -18,11 +18,13 @@
 
 // I went on a months long quest, fought with a dragon and brought back this treasure.
 
-#include "POSRTPController.h"
 #include <string.h>
+#include <stdio.h>
+
 #include "HAP.h"
 #include <HAP+Internal.h>
-#include <stdio.h>
+
+#include "POSRTPController.h"
 
 static const HAPLogObject logObject = { .subsystem = kHAP_LogSubsystem, .category = "POSRTPController" };
 
@@ -508,6 +510,7 @@ uint32_t POSMakeRTPPacket(POSRTPStreamRef *stream, uint8_t *payloadBytes, size_t
   return (uint32_t)tempBytesWritten;
 }
 
+//todo: replace with HAPReadLittleUInt32 and HAPWriteLittleUInt32
 uint32_t localEndian(uint32_t input)
 {
   uint32_t byteSwapTemp = (input >> 0x10) << 0x18 | (input >> 0x18) << 0x10;

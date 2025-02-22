@@ -1,40 +1,38 @@
-// Copyright (c) 2015-2019 The HomeKit ADK Contributors
-//
-// Licensed under the Apache License, Version 2.0 (the “License”);
-// you may not use this file except in compliance with the License.
-// See [CONTRIBUTORS.md] for the list of HomeKit ADK project authors.
+/* 
+ * This file is part of the positron distribution (https://github.com/radredgreen/positron).
+ * Copyright (c) 2024 RadRedGreen.
+ * 
+ * This program is free software: you can redistribute it and/or modify  
+ * it under the terms of the GNU General Public License as published by  
+ * the Free Software Foundation, version 3.
+ *
+ * This program is distributed in the hope that it will be useful, but 
+ * WITHOUT ANY WARRANTY; without even the implied warranty of 
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU 
+ * General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License 
+ * along with this program. If not, see <http://www.gnu.org/licenses/>.
+ */
 
-// An example that implements the light bulb HomeKit profile. It can serve as a basic implementation for
-// any platform. The accessory logic implementation is reduced to internal state updates and log output.
-//
-// This implementation is platform-independent.
-//
-// The code consists of multiple parts:
-//
-//   1. The definition of the accessory configuration and its internal state.
-//
-//   2. Helper functions to load and save the state of the accessory.
-//
-//   3. The definitions for the HomeKit attribute database.
-//
-//   4. The callbacks that implement the actual behavior of the accessory, in this
-//      case here they merely access the global accessory state variable and write
-//      to the log to make the behavior easily observable.
-//
-//   5. The initialization of the accessory state.
-//
-//   6. Callbacks that notify the server in case their associated value has changed.
+
+#include <stdlib.h>
+#include <string.h>
+
+#include "ingenicVideoPipeline.h"
 
 #include "HAP.h"
 #include "HAPTLV+Internal.h"
 #include "HAPCharacteristicTypes.h"
 
-#include <string.h>
+#include "App_Camera.h"
+#include "App_Secure_Camera.h"
+#include "POSDataStream.h"
+#include "POSCameraController.h"
+#include "POSRecordingController.h"
 #include "App.h"
 #include "DB.h"
-#include <stdlib.h>
-#include "ingenicVideoPipeline.h"
-#include "App_Camera.h"
+
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 /**
@@ -88,16 +86,20 @@ static void LoadAccessoryState(void) {
         accessoryConfiguration.state.streaming = kHAPCharacteristicValue_StreamingStatus_Available;
         accessoryConfiguration.state.microphone.muted = true;
         accessoryConfiguration.state.motion.detected = false;
+        accessoryConfiguration.state.motion.active = true;
+        accessoryConfiguration.state.rtp.active = kHAPCharacteristicValue_Active_Active;
+        accessoryConfiguration.state.operatingMode.nightVision = true;
+        accessoryConfiguration.state.operatingMode.indicator = true;
+        accessoryConfiguration.state.operatingMode.flip = false;
         accessoryConfiguration.state.operatingMode.homekitActive = true;
         accessoryConfiguration.state.operatingMode.recordingActive = kHAPCharacteristicValue_Active_Active;
         accessoryConfiguration.state.operatingMode.recordingAudioActive = kHAPCharacteristicValue_RecordingAudioActive_Include;
+        accessoryConfiguration.state.operatingMode.periodicSnapshots = true;
+        accessoryConfiguration.state.operatingMode.eventSnapshots = true;
         accessoryConfiguration.state.active = kHAPCharacteristicValue_Active_Active;
     }
     accessoryConfiguration.state.streaming = kHAPCharacteristicValue_StreamingStatus_Available;
     
-    HAPLogError(&kHAPLog_Default, "accessoryConfiguration.state.streaming address in LoadAccessoryState: %p\n", &accessoryConfiguration.state.streaming);
-    HAPLogError(&kHAPLog_Default, "streaming state: %d", accessoryConfiguration.state.streaming);
-
 }
 /**
  * Save the accessory state to persistent memory.
@@ -139,9 +141,9 @@ void SaveAccessoryState(void) {
                                                                             &rtpStreamService,
                                                                             &microphoneService,
                                                                             &motionDetectService,
-                                                                            //&cameraOperatingModeService,
-                                                                            //&cameraRecordingManagementService,
-                                                                            //&dataStreamTransportManagementService,
+                                                                            &cameraOperatingModeService,
+                                                                            &cameraRecordingManagementService,
+                                                                            &dataStreamTransportManagementService,
                                                                             NULL },
                                   .callbacks = { .identify = IdentifyAccessory } };
 
@@ -176,6 +178,9 @@ void AppCreate(HAPAccessoryServerRef* server, HAPPlatformKeyValueStoreRef keyVal
     accessoryConfiguration.server = server;
     accessoryConfiguration.keyValueStore = keyValueStore;
     LoadAccessoryState();
+    set_red_led(accessoryConfiguration.state.operatingMode.indicator);
+    set_flip(accessoryConfiguration.state.operatingMode.flip);
+
 }
 
 void AppRelease(void) {
@@ -221,17 +226,11 @@ void AppInitialize(
 
 void ContextInitialize(AccessoryContext* context) {
     memset(context, 0, sizeof(context));
-    memset(context->session.sessionId, 0, UUIDLENGTH);
-    context->session.status = kHAPCharacteristicValue_StreamingStatus_Available;
-    accessoryConfiguration.state.streaming = kHAPCharacteristicValue_StreamingStatus_Available;
 
-    HAPPlatformRandomNumberFill(&context->session.ssrcVideo , 4);
-    do{
-        HAPPlatformRandomNumberFill(&context->session.ssrcAudio , 4);
-    } while( context->session.ssrcVideo == context->session.ssrcAudio );
-
+    POSDataStreamInit();
     StreamContextInitialize(context);
-    initVideoPipeline();
+    initVideoPipeline(&accessoryConfiguration);    
+    RecordingContextInitialize(context); // needs to init after initVideoPipeline
 }
 
 void ContextDeintialize(AccessoryContext* context) {

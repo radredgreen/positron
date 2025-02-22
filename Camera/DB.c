@@ -1,11 +1,19 @@
-// Copyright (c) 2015-2019 The HomeKit ADK Contributors
-//
-// Licensed under the Apache License, Version 2.0 (the “License”);
-// you may not use this file except in compliance with the License.
-// See [CONTRIBUTORS.md] for the list of HomeKit ADK project authors.
-
-// This file contains the accessory attribute database that defines the accessory information service, HAP Protocol
-// Information Service, the Pairing service and finally the service signature exposed by the light bulb.
+/* 
+ * This file is part of the positron distribution (https://github.com/radredgreen/positron).
+ * Copyright (c) 2024 RadRedGreen.
+ * 
+ * This program is free software: you can redistribute it and/or modify  
+ * it under the terms of the GNU General Public License as published by  
+ * the Free Software Foundation, version 3.
+ *
+ * This program is distributed in the hope that it will be useful, but 
+ * WITHOUT ANY WARRANTY; without even the implied warranty of 
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU 
+ * General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License 
+ * along with this program. If not, see <http://www.gnu.org/licenses/>.
+ */
 
 #include "App.h"
 #include "DB.h"
@@ -51,11 +59,14 @@
 
 #define kIID_MotionSensor   ((uint64_t) 0x0050)
 #define kIID_MotionDetected ((uint64_t) 0x0051)
+#define kIID_MotionActive ((uint64_t) 0x0052)
 
 #define kIID_CameraOperatingMode    ((uint64_t) 0x0060)
 #define kIID_CameraEventSnapshots   ((uint64_t) 0x0061)
 #define kIID_CameraHomekitCamActive ((uint64_t) 0x0062)
 #define kIID_CameraPeriodicSnapshots   ((uint64_t) 0x0063)
+#define kIID_CameraOperatingModeNightVision    ((uint64_t) 0x0064)
+#define kIID_CameraOperatingModeIndicator    ((uint64_t) 0x0065)
 
 #define kIID_CameraRecordingManagement     ((uint64_t) 0x0070)
 #define kIID_SupportedCamRecordingConfig   ((uint64_t) 0x0071)
@@ -68,8 +79,10 @@
 #define kIID_DataStreamManagement               ((uint64_t) 0x0080)
 #define kIID_SupportedDataStreamTransportConfig ((uint64_t) 0x0081)
 #define kIID_SetupDataStreamTransport           ((uint64_t) 0x0082)
+#define kIID_DataStreamVersion           ((uint64_t) 0x0083)
 
-HAP_STATIC_ASSERT(kAttributeCount == 10 + 2 + 5 + 8 + 2 + 2 + 4 + 7 + 3, AttributeCount_mismatch);
+
+HAP_STATIC_ASSERT(kAttributeCount == 10 + 2 + 5 + 8 + 2 + 3 + 6 + 7 + 4, AttributeCount_mismatch);
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -461,7 +474,7 @@ const HAPUInt8Characteristic rtpActiveCharacteristic = {
     .format = kHAPCharacteristicFormat_UInt8,
     .iid = kIID_RTPActive,
     .characteristicType = &kHAPCharacteristicType_Active,
-    .debugDescription = kHAPCharacteristicDebugDescription_Active,
+    .debugDescription = "rtp-active",
     .constraints = { .minimumValue = 0,
                      .maximumValue = 1,
                      .stepValue = 0,
@@ -484,7 +497,7 @@ const HAPService rtpStreamService = { .iid = kIID_RTPStream,
                                       .serviceType = &kHAPServiceType_CameraRTPStreamManagement,
                                       .debugDescription = kHAPServiceDebugDescription_CameraRTPStreamManagement,
                                       .name = NULL,
-                                      .properties = { .primaryService = true, .hidden = false },
+                                      .properties = { .primaryService = false, .hidden = false },
                                       .linkedServices = NULL,
                                       .characteristics = (const HAPCharacteristic* const[]) {
                                               &selectedRTPConfigurationCharacteristic,
@@ -493,7 +506,7 @@ const HAPService rtpStreamService = { .iid = kIID_RTPStream,
                                               &supportedVideoStreamCharacteristic,
                                               &supportedRTPConfigurationCharacteristic,
                                               &setupEndpointsCharacteristic,
-                                              //&rtpActiveCharacteristic,
+                                              &rtpActiveCharacteristic,
                                               NULL } };
 
 const HAPBoolCharacteristic microphoneMuteCharacteristic = {
@@ -536,6 +549,21 @@ const HAPBoolCharacteristic motionDetectedCharacteristic = {
     .callbacks = { .handleRead = HandleMotionDetectedRead, .handleWrite = NULL }
 };
 
+const HAPBoolCharacteristic motionActiveCharacteristic = {
+    .format = kHAPCharacteristicFormat_Bool,
+    .iid = kIID_MotionActive,
+    .characteristicType = &kHAPCharacteristicType_StatusActive,
+    .debugDescription = "motion-active",
+    .properties = { .readable = true,
+                    .writable = true,
+                    .supportsEventNotification = true,
+                    .hidden = false,
+                    .requiresTimedWrite = false,
+                    .supportsAuthorizationData = false,
+                    .ip = { .controlPoint = false, .supportsWriteResponse = false } },
+    .callbacks = { .handleRead = HandleMotionActiveRead, .handleWrite = HandleMotionActiveWrite }
+};
+
 const HAPService motionDetectService = {
     .iid = kIID_MotionSensor,
     .serviceType = &kHAPServiceType_MotionSensor,
@@ -543,7 +571,10 @@ const HAPService motionDetectService = {
     .name = NULL, // Optional
     .properties = { .primaryService = false, .hidden = false },
     .linkedServices = NULL,
-    .characteristics = (const HAPCharacteristic* const[]) { &motionDetectedCharacteristic, NULL }
+    .characteristics = (const HAPCharacteristic* const[]) { 
+                                        &motionDetectedCharacteristic, 
+                                        &motionActiveCharacteristic,
+                                        NULL }
 };
 
 /**
@@ -570,13 +601,13 @@ const HAPBoolCharacteristic homekitCameraActiveCharacteristic = {
     .characteristicType = &kHAPCharacteristicType_HomeKitCameraActive,
     .debugDescription = kHAPCharacteristicDebugDescription_HomeKitCameraActive,
     .properties = { .readable = true,
-                    .writable = false,
+                    .writable = true,
                     .supportsEventNotification = true,
                     .hidden = false,
-                    .requiresTimedWrite = false,
+                    .requiresTimedWrite = true,
                     .supportsAuthorizationData = false,
                     .ip = { .controlPoint = false, .supportsWriteResponse = false } },
-    .callbacks = { .handleRead = HandleHomeKitCamActiveRead, .handleWrite = NULL }
+    .callbacks = { .handleRead = HandleHomeKitCamActiveRead, .handleWrite = HandleHomeKitCamActiveWrite }
 };
 const HAPBoolCharacteristic periodicSnapshotsActiveCharacteristic = {
     .format = kHAPCharacteristicFormat_Bool,
@@ -592,6 +623,34 @@ const HAPBoolCharacteristic periodicSnapshotsActiveCharacteristic = {
                     .ip = { .controlPoint = false, .supportsWriteResponse = false } },
     .callbacks = { .handleRead = HandlePeriodicSnapActiveRead, .handleWrite = HandlePeriodicSnapActiveWrite }
 };
+const HAPBoolCharacteristic nightVisionCharacteristic = {
+    .format = kHAPCharacteristicFormat_Bool,
+    .iid = kIID_CameraOperatingModeNightVision,
+    .characteristicType = &kHAPCharacteristicType_NightVision,
+    .debugDescription = kHAPCharacteristicDebugDescription_NightVision,
+    .properties = { .readable = true,
+                    .writable = true,
+                    .supportsEventNotification = true,
+                    .hidden = false,
+                    .requiresTimedWrite = true,
+                    .supportsAuthorizationData = false,
+                    .ip = { .controlPoint = false, .supportsWriteResponse = false } },
+    .callbacks = { .handleRead = HandleNightVisionRead, .handleWrite = HandleNightVisionWrite }
+};
+const HAPBoolCharacteristic operatingModeIndicatorCharacteristic = {
+    .format = kHAPCharacteristicFormat_Bool,
+    .iid = kIID_CameraOperatingModeIndicator,
+    .characteristicType = &kHAPCharacteristicType_CameraOperatingModeIndicator,
+    .debugDescription = kHAPCharacteristicDebugDescription_CameraOperatingModeIndicator,
+    .properties = { .readable = true,
+                    .writable = true,
+                    .supportsEventNotification = true,
+                    .hidden = false,
+                    .requiresTimedWrite = true,
+                    .supportsAuthorizationData = false,
+                    .ip = { .controlPoint = false, .supportsWriteResponse = false } },
+    .callbacks = { .handleRead = HandleOperatingModeIndicatorRead, .handleWrite = HandleOperatingModeIndicatorWrite }
+};
 const HAPService cameraOperatingModeService = { .iid = kIID_CameraOperatingMode,
                                                 .serviceType = &kHAPServiceType_CameraOperatingMode,
                                                 .debugDescription = kHAPServiceDebugDescription_CameraOperatingMode,
@@ -602,6 +661,8 @@ const HAPService cameraOperatingModeService = { .iid = kIID_CameraOperatingMode,
                                                         &eventSnapshotsActiveCharacteristic,
                                                         &homekitCameraActiveCharacteristic,
                                                         &periodicSnapshotsActiveCharacteristic,
+                                                        &nightVisionCharacteristic,
+                                                        &operatingModeIndicatorCharacteristic,
                                                         NULL } };
 
 /**
@@ -669,7 +730,7 @@ const HAPUInt8Characteristic cameraRecMgmtActiveCharacteristic = {
     .format = kHAPCharacteristicFormat_UInt8,
     .iid = kIID_CameraRecordingMgmtActive,
     .characteristicType = &kHAPCharacteristicType_Active,
-    .debugDescription = kHAPCharacteristicDebugDescription_Active,
+    .debugDescription = "recording-active",
     .constraints = { .minimumValue = 0,
                     .maximumValue = 1,
                     .stepValue = 0 ,
@@ -702,7 +763,7 @@ const HAPUInt8Characteristic cameraRecMgmtRecAudioActiveCharacteristic = {
                     .writable = true,
                     .supportsEventNotification = true,
                     .hidden = false,
-                    .requiresTimedWrite = false,
+                    .requiresTimedWrite = true,
                     .supportsAuthorizationData = false,
                     .ip = { .controlPoint = false, .supportsWriteResponse = false } },
     .callbacks = { .handleRead = HandleCamRecMgmtRecAudioActiveRead, .handleWrite = HandleCamRecMgmtRecAudioActiveWrite }
@@ -756,6 +817,24 @@ const HAPTLV8Characteristic supportedDataStreamTransportConfigurationCharacteris
                     .ip = { .controlPoint = false, .supportsWriteResponse = false } },
     .callbacks = { .handleRead = HandleSupportedDSTransportConfRead, .handleWrite = NULL }
 };
+
+const HAPStringCharacteristic dataStreamVersionCharacteristic = {
+    .format = kHAPCharacteristicFormat_String,
+    .iid = kIID_DataStreamVersion,
+    .characteristicType = &kHAPCharacteristicType_Version,
+    .debugDescription = "datastream-version",
+    .manufacturerDescription = NULL,
+    .properties = { .readable = true,
+                    .writable = false,
+                    .supportsEventNotification = false,
+                    .hidden = false,
+                    .requiresTimedWrite = false,
+                    .supportsAuthorizationData = false,
+                    .ip = { .controlPoint = false, .supportsWriteResponse = false } },
+    .constraints = { .maxLength = 64 },
+    .callbacks = { .handleRead = HandleDSVersionRead, .handleWrite = NULL }
+};
+
 const HAPService dataStreamTransportManagementService = {
     .iid = kIID_DataStreamManagement,
     .serviceType = &kHAPServiceType_DataStreamTransportManagement,
@@ -765,5 +844,6 @@ const HAPService dataStreamTransportManagementService = {
     .linkedServices = (uint16_t const[]) { kIID_CameraRecordingManagement, 0 },
     .characteristics = (const HAPCharacteristic* const[]) { &setupDataStreamTransportCharacteristic,
                                                             &supportedDataStreamTransportConfigurationCharacteristic,
+                                                            &dataStreamVersionCharacteristic,
                                                             NULL }
 };

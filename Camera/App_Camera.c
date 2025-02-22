@@ -1,9 +1,27 @@
-/*
- * App_Camera.c
+/* 
+ * This file is part of the positron distribution (https://github.com/radredgreen/positron).
+ * Copyright (c) 2024 RadRedGreen.
+ * 
+ * This program is free software: you can redistribute it and/or modify  
+ * it under the terms of the GNU General Public License as published by  
+ * the Free Software Foundation, version 3.
  *
- *  Created on: Dec 29, 2020
- *      Author: joe
+ * This program is distributed in the hope that it will be useful, but 
+ * WITHOUT ANY WARRANTY; without even the implied warranty of 
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU 
+ * General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License 
+ * along with this program. If not, see <http://www.gnu.org/licenses/>.
  */
+
+
+#include <unistd.h>
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <netdb.h>
+
+#include <string.h>
 
 #include "HAP.h"
 #include "HAPBase.h"
@@ -12,51 +30,23 @@
 #include "App.h"
 #include "DB.h"
 #include "util_base64.h"
+#include "POSCameraController.h"
 
-#include <string.h>
 
 //Temporary debugging
 #include <stdio.h>
 
 // Socket, address and port lookups
-#include <sys/types.h>
-#include <sys/socket.h>
-#include <netdb.h>
+
 
 /* ---------------------------------------------------------------------------------------------*/
-// TODO - Refactor these helper functions out of here.
+
 
 bool isValid(void* unsused HAP_UNUSED) {
     return true;
 }
 
-/**
- * The callback used to decode a value.
- *
- * @param[out] value                Decoded value.
- * @param      bytes                Encoded value buffer. May be modified.
- * @param      numBytes             Length of encoded value buffer.
- *
- * @return kHAPError_None           If successful.
- * @return kHAPError_InvalidData    If invalid data was encountered while parsing.
- */
-//Backup
-/*
-HAP_RESULT_USE_CHECK
-HAPError decodeIpAddress(in_addr_t* value, void* bytes, size_t numBytes) {
-printf("decodeIpAddress, %s\n", bytes);
-    in_addr_t* ia = value;
-    int s;
-    char ipAddr[numBytes + 1]; // Not sure why unless char needs \0
-    HAPRawBufferZero(ipAddr, numBytes + 1);
-    HAPRawBufferCopyBytes(&ipAddr, bytes, numBytes);
-    s = inet_pton(AF_INET, ipAddr, ia);
-    if (s <= 0) {
-        HAPLogError(&kHAPLog_Default, "%s\n", "Invalid address");
-        return kHAPError_InvalidData;
-    };
-    return kHAPError_None;
-};*/
+
 
 //value out
 //bytes in
@@ -66,47 +56,15 @@ char dbgout[INET6_ADDRSTRLEN+1];
 //strncpy(dbgout, bytes, INET6_ADDRSTRLEN);
 //dbgout[numBytes] = 0;
 //printf("decodeIpAddress, %s\n", dbgout);
-    HAPRawBufferCopyBytes((uint8_t*) value, (uint8_t*) bytes, numBytes);
+    if (numBytes < INET6_ADDRSTRLEN)
+        HAPRawBufferCopyBytes((uint8_t*) value, (uint8_t*) bytes, numBytes);
+    else
+        HAPRawBufferCopyBytes((uint8_t*) value, (uint8_t*) bytes, INET6_ADDRSTRLEN);
+
     return kHAPError_None;
 };
 
 
-HAP_RESULT_USE_CHECK
-HAPError decodeUInt8value(uint8_t* value, void* bytes, size_t numBytes) {
-    HAPRawBufferCopyBytes((uint8_t*) value, (uint8_t*) bytes, numBytes);
-    return kHAPError_None;
-};
-
-/**
- * The callback used to encode a value.
- *
- * @param      value                Value to encode.
- * @param[out] bytes                Encoded value buffer.
- * @param      maxBytes             Capacity of encoded value buffer.
- * @param[out] numBytes             Length of encoded value buffer.
- *
- * @return kHAPError_None           If successful.
- * @return kHAPError_Unknown        If an unknown error occurred while serializing.
- * @return kHAPError_InvalidState   If serialization is not possible in the current state.
- * @return kHAPError_OutOfResources If out of resources while serializing.
- * @return kHAPError_Busy           If serialization is temporarily not possible.
- */
-// Backup
-/*
-HAPError encodeIpAddress(in_addr_t* value, void* bytes, size_t maxBytes, size_t* numBytes) {
-    if (maxBytes < INET_ADDRSTRLEN) {
-        return kHAPError_OutOfResources;
-    };
-    in_addr_t* ia = value;
-    inet_ntop(AF_INET, ia, bytes, INET_ADDRSTRLEN);
-    if (bytes == NULL) {
-        return kHAPError_Unknown;
-    }
-    *numBytes = strlen(bytes);
-printf("encodeIpAddress, %s\n", bytes);
-    return kHAPError_None;
-};
-*/
 HAPError encodeIpAddress(uint8_t*  value, void* bytes, size_t maxBytes, size_t* numBytes) {
     HAPLogInfo(&kHAPLog_Default, "%s", __func__);
     HAPRawBufferCopyBytes((uint8_t*) bytes, (uint8_t*) value, INET6_ADDRSTRLEN);
@@ -114,20 +72,7 @@ HAPError encodeIpAddress(uint8_t*  value, void* bytes, size_t maxBytes, size_t* 
     //printf("encodeIpAddress, %s\n", bytes);
     return kHAPError_None;
 }
-/*
-HAPError encodeIpAddress(char value[INET6_ADDRSTRLEN], void* bytes, size_t maxBytes, size_t* numBytes) {
-    if (maxBytes < INET6_ADDRSTRLEN) {
-        return kHAPError_OutOfResources;
-    }
-    if (bytes == NULL) {
-        return kHAPError_Unknown;
-    }
-    HAPRawBufferZero(bytes, INET6_ADDRSTRLEN);
-    HAPRawBufferCopyBytes(bytes, value, numBytes);
-    *numBytes = strlen(bytes);
-    return kHAPError_None;
-};
-*/
+
 
 HAPError encodeUInt8UUIDValue(uint8_t* value, void* bytes, size_t maxBytes HAP_UNUSED, size_t* numBytes) {
     HAPLogInfo(&kHAPLog_Default, "%s", __func__);
@@ -136,25 +81,11 @@ HAPError encodeUInt8UUIDValue(uint8_t* value, void* bytes, size_t maxBytes HAP_U
     return kHAPError_None;
 };
 
-
-/*
-HAPError encodeUInt8KeyValue(uint8_t* value, void* bytes, size_t maxBytes HAP_UNUSED, size_t* numBytes) {
-    HAPLogInfo(&kHAPLog_Default, "%s", __func__);
-    util_base64_encode(value, KEYLENGTH, bytes, maxBytes, numBytes);
-    //((char *) bytes)[(int *)numBytes] = '\0';
-    //printf("\nmaxBytes: %lu, numBytes: %lu, ssrc64length, %lu, value(first byte), %x\n", maxBytes, *numBytes, ssrc64length, (unsigned int ) value);
-    printf("\n\n\nKey: %s\n\n\n", bytes);
+HAP_RESULT_USE_CHECK
+HAPError decodeUInt8UUIDValue(uint8_t* value, void* bytes, size_t numBytes) {
+    HAPRawBufferCopyBytes((uint8_t*) value, (uint8_t*) bytes, UUIDLENGTH);
     return kHAPError_None;
 };
-
-HAPError encodeUInt8SaltValue(uint8_t* value, void* bytes, size_t maxBytes HAP_UNUSED, size_t* numBytes) {
-    HAPLogInfo(&kHAPLog_Default, "%s", __func__);
-    util_base64_encode(value, SALTLENGTH, bytes, maxBytes, numBytes);
-//    ((char *) bytes)[(int *)numBytes] = '\0';
-    printf("\n\n\nSalt: %s\n\n\n", bytes);
-    return kHAPError_None;
-};
-*/
 
 HAPError encodeUInt8KeyValue(uint8_t* value, void* bytes, size_t maxBytes HAP_UNUSED, size_t* numBytes) {
     HAPLogInfo(&kHAPLog_Default, "%s", __func__);
@@ -171,61 +102,36 @@ HAPError encodeUInt8KeyValue(uint8_t* value, void* bytes, size_t maxBytes HAP_UN
     return kHAPError_None;
 };
 
+HAP_RESULT_USE_CHECK
+HAPError decodeUInt8KeyValue(uint8_t* value, void* bytes, size_t numBytes) {
+    HAPRawBufferCopyBytes((uint8_t*) value, (uint8_t*) bytes, KEYLENGTH);
+    return kHAPError_None;
+};
+
+
 HAPError encodeUInt8SaltValue(uint8_t* value, void* bytes, size_t maxBytes HAP_UNUSED, size_t* numBytes) {
     HAPLogInfo(&kHAPLog_Default, "%s", __func__);
     HAPRawBufferCopyBytes((uint8_t*) bytes, (uint8_t*) value, SALTLENGTH);
     *numBytes = SALTLENGTH;
     return kHAPError_None;
 };
-
-
-/**
- * The callback used to get the description of a value.
- *
- * @param      value                Valid value.
- * @param[out] bytes                Buffer to fill with the value's description. Will be NULL-terminated.
- * @param      maxBytes             Capacity of buffer.
- *
- * @return kHAPError_None           If successful.
- * @return kHAPError_OutOfResources If the supplied buffer is not large enough.
- */
-
-// Backup
-/*
-HAPError getIpAddressDescription(in_addr_t* value, char* bytes, size_t maxBytes) {
-    if (maxBytes < INET_ADDRSTRLEN) {
-        return kHAPError_OutOfResources;
-    };
-    in_addr_t* ia = value;
-    inet_ntop(AF_INET, ia, bytes, INET_ADDRSTRLEN);
-printf("getIpAddressDescription, %s\n", bytes);
+HAP_RESULT_USE_CHECK
+HAPError decodeUInt8SaltValue(uint8_t* value, void* bytes, size_t numBytes) {
+    HAPRawBufferCopyBytes((uint8_t*) value, (uint8_t*) bytes, SALTLENGTH);
     return kHAPError_None;
 };
-*/
+
+
 HAPError getIpAddressDescription(uint8_t * value, char* bytes, size_t maxBytes) {
     char str[INET6_ADDRSTRLEN];
     HAPRawBufferCopyBytes(bytes, value, INET6_ADDRSTRLEN);
     //printf("getIpAddressDescription, %s\n", bytes);
     return kHAPError_None;
 };
-/*
-HAPError getIpAddressDescription(char value[INET6_ADDRSTRLEN], char* bytes, size_t maxBytes) {
-    if (maxBytes < INET6_ADDRSTRLEN) {
-        return kHAPError_OutOfResources;
-    }
-    if (bytes == NULL) {
-        return kHAPError_Unknown;
-    }
-    HAPRawBufferZero(bytes, INET6_ADDRSTRLEN);
-    HAPRawBufferCopyBytes(bytes, value, INET6_ADDRSTRLEN);
-    return kHAPError_None;
-};
-*/
+
 HAPError getUInt8ValueDescription(uint8_t* value HAP_UNUSED, char* bytes, size_t maxBytes HAP_UNUSED) {
     char description[] = "UInt8 Value Description";
     HAPRawBufferCopyBytes(bytes, description, sizeof(description));
-    //snprintf(bytes,maxBytes,"%s",
-    //HAPRawBufferCopyBytes(bytes, value, sizeof(value));
 
     return kHAPError_None;
 };
@@ -469,11 +375,11 @@ const HAPUInt8TLVFormat videoCodecTypeFormat = { .type = kHAPTLVFormatType_UInt8
                                                  .constraints = { .minimumValue = 0, .maximumValue = 1 },
                                                  .callbacks = { .getDescription = NULL } };
 const HAPStructTLVMember videoCodecTypeMember = { .valueOffset = HAP_OFFSETOF(videoCodecConfigStruct, videoCodecType),
-                                                  .isSetOffset = 0,
+                                                  .isSetOffset = HAP_OFFSETOF(videoCodecConfigStruct, videoCodecTypeIsSet),
                                                   .tlvType = 1,
                                                   .debugDescription = "Video Codec Type",
                                                   .format = &videoCodecTypeFormat,
-                                                  .isOptional = false,
+                                                  .isOptional = true,
                                                   .isFlat = false };
 
 /* ---------------------------------------------------------------------------------------------*/
@@ -489,11 +395,11 @@ const VideoCodecConfigFormat videoCodecParamsFormat = {
 };
 const HAPStructTLVMember videoCodecParamsMember = { .valueOffset =
                                                             HAP_OFFSETOF(videoCodecConfigStruct, videoCodecParams),
-                                                    .isSetOffset = 0,
+                                                    .isSetOffset = HAP_OFFSETOF(videoCodecConfigStruct, videoCodecParamsIsSet),
                                                     .tlvType = 2,
                                                     .debugDescription = "Video Codec Parameters",
                                                     .format = &videoCodecParamsFormat,
-                                                    .isOptional = false,
+                                                    .isOptional = true,
                                                     .isFlat = false };
 
 /* ---------------------------------------------------------------------------------------------*/
@@ -672,7 +578,7 @@ const HAPStructTLVMember accessoryAddressTypeMember = { .valueOffset = HAP_OFFSE
 /* ---------------------------------------------------------------------------------------------*/
 
 const SessionIdTypeFormat sessionIdTypeFormat = { .type = kHAPTLVFormatType_Value,
-                                                  .callbacks = { .decode = decodeUInt8value,
+                                                  .callbacks = { .decode = decodeUInt8UUIDValue,
                                                                  .encode = encodeUInt8UUIDValue,
                                                                  .getDescription = getUInt8UUIDValueDescription } };
 
@@ -720,12 +626,12 @@ const HAPUInt8TLVFormat srtpCryptoSuiteTypeFormat = { .type = kHAPTLVFormatType_
                                                                      .getDescription = NULL } };
 
 const SrtpMasterKeyTypeFormat srtpMasterKeyTypeFormat = { .type = kHAPTLVFormatType_Value,
-                                                          .callbacks = { .decode = decodeUInt8value,
+                                                          .callbacks = { .decode = decodeUInt8KeyValue,
                                                                          .encode = encodeUInt8KeyValue,
                                                                          .getDescription = getKeyValueDescription } };
 
 const SrtpMasterSaltTypeFormat srtpMasterSaltTypeFormat = { .type = kHAPTLVFormatType_Value,
-                                                            .callbacks = { .decode = decodeUInt8value,
+                                                            .callbacks = { .decode = decodeUInt8SaltValue,
                                                                            .encode = encodeUInt8SaltValue,
                                                                            .getDescription =
                                                                                    getSaltValueDescription } };
@@ -835,21 +741,21 @@ const HAPUInt8TLVFormat payloadTypeFormat = { .type = kHAPTLVFormatType_UInt8,
                                               .callbacks = { .getBitDescription = NULL, .getDescription = NULL } };
 
 const HAPStructTLVMember payloadTypeMember = { .valueOffset = HAP_OFFSETOF(rtpParameters, payloadType),
-                                               .isSetOffset = 0,
+                                               .isSetOffset = HAP_OFFSETOF(rtpParameters, payloadTypeIsSet),
                                                .tlvType = 1,
                                                .debugDescription = "Payload Type",
                                                .format = &payloadTypeFormat,
-                                               .isOptional = false,
+                                               .isOptional = true,
                                                .isFlat = false };
 
 /* ---------------------------------------------------------------------------------------------*/
 
 const HAPStructTLVMember selectedSsrcTypeMember = { .valueOffset = HAP_OFFSETOF(rtpParameters, ssrc),
-                                                    .isSetOffset = 0,
+                                                    .isSetOffset = HAP_OFFSETOF(rtpParameters, ssrcIsSet),
                                                     .tlvType = 2,
                                                     .debugDescription = "Selected SSRC Type",
                                                     .format = &ssrcTypeFormat,
-                                                    .isOptional = false,
+                                                    .isOptional = true,
                                                     .isFlat = false };
 
 /* ---------------------------------------------------------------------------------------------*/
@@ -860,11 +766,11 @@ const HAPUInt16TLVFormat maximumBitrateTypeFormat = { .type = kHAPTLVFormatType_
                                                                      .getDescription = NULL } };
 
 const HAPStructTLVMember maximumBitrateTypeMember = { .valueOffset = HAP_OFFSETOF(rtpParameters, maximumBitrate),
-                                                      .isSetOffset = 0,
+                                                      .isSetOffset = HAP_OFFSETOF(rtpParameters, maximumBitrateIsSet),
                                                       .tlvType = 3,
                                                       .debugDescription = "Maximum Bit Rate Type",
                                                       .format = &maximumBitrateTypeFormat,
-                                                      .isOptional = false,
+                                                      .isOptional = true,
                                                       .isFlat = false };
 
 /* ---------------------------------------------------------------------------------------------*/
@@ -875,14 +781,12 @@ const HAPUInt32TLVFormat minRTCPIntervalTypeFormat = { .type = kHAPTLVFormatType
                                                                       .getDescription = NULL } };
 
 const HAPStructTLVMember minRTCPIntervalTypeMember = { .valueOffset = HAP_OFFSETOF(rtpParameters, minRTCPinterval),
-                                                       .isSetOffset = 0,
+                                                       .isSetOffset = HAP_OFFSETOF(rtpParameters, minRTCPintervalIsSet),
                                                        .tlvType = 4,
                                                        .debugDescription = "Min RTCP Interval Type",
                                                        .format = &minRTCPIntervalTypeFormat,
-                                                       .isOptional = false,
+                                                       .isOptional = true,
                                                        .isFlat = false };
-
-/* ---------------------------------------------------------------------------------------------*/
 
 /* ---------------------------------------------------------------------------------------------*/
 
@@ -890,12 +794,12 @@ const HAPUInt16TLVFormat maximumMTUTypeFormat = { .type = kHAPTLVFormatType_UInt
                                                   .constraints = { .minimumValue = 0, .maximumValue = 0xFFFF },
                                                   .callbacks = { .getBitDescription = NULL, .getDescription = NULL } };
 
-const HAPStructTLVMember maximumMTUTypeMember = { .valueOffset = HAP_OFFSETOF(videoRtpParameters, maxMTU),
-                                                  .isSetOffset = 0,
+const HAPStructTLVMember maximumMTUTypeMember = { .valueOffset = HAP_OFFSETOF(rtpParameters, maxMTU),
+                                                  .isSetOffset = HAP_OFFSETOF(rtpParameters, maxMTUIsSet),
                                                   .tlvType = 5,
                                                   .debugDescription = "Maximum MTU Type",
                                                   .format = &maximumMTUTypeFormat,
-                                                  .isOptional = false,
+                                                  .isOptional = true,
                                                   .isFlat = false };
 
 /* ---------------------------------------------------------------------------------------------*/
@@ -903,7 +807,6 @@ const HAPStructTLVMember maximumMTUTypeMember = { .valueOffset = HAP_OFFSETOF(vi
 const VideoRTPParametersTypeFormat videoRTPParametersTypeFormat = { .type = kHAPTLVFormatType_Struct,
                                                                     .members =
                                                                             (const HAPStructTLVMember* const[]) {
-                                                                                    // &videoRtpParametersMember,
                                                                                     &payloadTypeMember,
                                                                                     &selectedSsrcTypeMember,
                                                                                     &maximumBitrateTypeMember,
@@ -963,10 +866,6 @@ const HAPStructTLVMember audioRTPParametersTypeMember = { .valueOffset =
 
 /* ---------------------------------------------------------------------------------------------*/
 
-/* const HAPStructTLVMember streamingVideoCodecConfigMember = { .valueOffset = HAP_OFFSETOF(selectedVideoParameters,
-   codecConfig), .isSetOffset = 0, .tlvType = 1, .debugDescription = "Video Codec Config", .format =
-   &videoCodecConfigFormat, .isOptional = false, .isFlat = true }; */
-
 const SelectedVideoParametersFormat selectedVideoParametersFormat = {
     .type = kHAPTLVFormatType_Struct,
     .members =
@@ -978,14 +877,15 @@ const SelectedVideoParametersFormat selectedVideoParametersFormat = {
                                                   NULL },
     .callbacks = { .isValid = isValid }
 };
-// TODO - Fix this and selectedRTPStruct to align.
+
 const HAPStructTLVMember SelectedVideoRtpParametersMember = { .valueOffset =
                                                                       HAP_OFFSETOF(selectedRTPStruct, videoParameters),
-                                                              .isSetOffset = 0,
+                                                              .isSetOffset = 
+                                                                      HAP_OFFSETOF(selectedRTPStruct, videoParametersIsSet),
                                                               .tlvType = 2,
                                                               .debugDescription = "Selected Video RTP Parameters Type",
                                                               .format = &selectedVideoParametersFormat,
-                                                              .isOptional = false,
+                                                              .isOptional = true,
                                                               .isFlat = false };
 
 /* ---------------------------------------------------------------------------------------------*/
@@ -1006,10 +906,6 @@ const HAPStructTLVMember comfortNoiseSelectedTypeMember = { .valueOffset =
 
 /* ---------------------------------------------------------------------------------------------*/
 
-/* const HAPStructTLVMember streamingAudioCodecConfigMember = { .valueOffset = HAP_OFFSETOF(selectedAudioParameters,
-   codecConfig), .isSetOffset = 0, .tlvType = 1, .debugDescription = "Audio Codec Config", .format =
-   &audioCodecConfigFormat, .isOptional = false, .isFlat = true }; */
-
 const SelectedAudioParametersFormat selectedAudioParametersFormat = {
     .type = kHAPTLVFormatType_Struct,
     .members =
@@ -1024,11 +920,11 @@ const SelectedAudioParametersFormat selectedAudioParametersFormat = {
 
 const HAPStructTLVMember SelectedAudioRtpParametersMember = { .valueOffset =
                                                                       HAP_OFFSETOF(selectedRTPStruct, audioParameters),
-                                                              .isSetOffset = 0,
+                                                              .isSetOffset = HAP_OFFSETOF(selectedRTPStruct, audioParametersIsSet),
                                                               .tlvType = 3,
                                                               .debugDescription = "Selected Audio RTP Parameters Type",
                                                               .format = &selectedAudioParametersFormat,
-                                                              .isOptional = false,
+                                                              .isOptional = true,
                                                               .isFlat = false };
 
 /* ---------------------------------------------------------------------------------------------*/
@@ -1079,36 +975,6 @@ const SelectedRTPFormat selectedRTPFormatWrite = {
     .callbacks = { .isValid = isValid }
 };
 
-// TODO - Use this instead of actually putting it in HandleSupportedVideoRead.
-const HAPTLV videoConfig = { .type = 0x01,
-                             .value = { .bytes =
-                                                (uint8_t[]) {
-                                                        0x01, 0x01, 0x00,       // CodecType
-                                                        0x02, 0x18,             // CodecParams
-                                                        0x01, 0x01, 0x00,       // ProfileId - Constrained
-                                                        0x01, 0x01, 0x01,       // ProfileId - Main
-                                                        0x01, 0x01, 0x02,       // ProfileId - High
-                                                        0x02, 0x01, 0x00,       // Level 3.1
-                                                        0x02, 0x01, 0x01,       // Level 3.2
-                                                        0x02, 0x01, 0x02,       // Level 4
-                                                        0x03, 0x01, 0x00,       // PacketMode
-                                                        0x04, 0x01, 0x00,       // CVO Enabled false
-                                                        0x03, 0x0B,             // Attributes
-                                                        0x01, 0x02, 0x80, 0x07, // Width 1920 - bytes flipped
-                                                        0x02, 0x02, 0x38, 0x04, // Height 1080 - bytes flipped
-                                                        0x03, 0x01, 0x18,       // Framerate
-                                                        0x03, 0x0B,             // Attributes
-                                                        0x01, 0x02, 0x00, 0x05, // Width 1280 - bytes flipped
-                                                        0x02, 0x02, 0xD0, 0x02, // Height 720 - bytes flipped
-                                                        0x03, 0x01, 0x18,       // Framerate
-                                                        0x03, 0x0B,             // Attributes
-                                                        0x01, 0x02, 0x40, 0x01, // Width 320 - bytes flipped
-                                                        0x02, 0x02, 0xF0, 0x00, // Height 240 - bytes flipped
-                                                        0x03, 0x01, 0x18        // Framerate
-                                                },
-                                        .numBytes = 0x44 } };
-
-/* ---------------------------------------------------------------------------------------------*/
 
 HAP_RESULT_USE_CHECK
 HAPError VerifyCodecConfigTLV(void* actualBytes, size_t numActualBytes) {
@@ -1124,7 +990,7 @@ HAPError VerifyCodecConfigTLV(void* actualBytes, size_t numActualBytes) {
     HAPAssert(!err);
     if (tlv.type == 1) {
         uint8_t codecBuffer[tlv.value.numBytes];
-        HAPRawBufferCopyBytes(codecBuffer, &tlv.value.bytes[0], tlv.value.numBytes);
+        HAPRawBufferCopyBytes(codecBuffer, &tlv.value.bytes, tlv.value.numBytes);
         HAPTLVReaderRef codecReader;
         HAPTLVReaderCreateWithOptions(
                 &codecReader,
@@ -1142,7 +1008,7 @@ HAPError VerifyCodecConfigTLV(void* actualBytes, size_t numActualBytes) {
                 &kHAPLog_Default, "tlv type: %d\ntlv size: %lu\n", attributesTLV.type, attributesTLV.value.numBytes);
 
         uint8_t attributesBuffer[attributesTLV.value.numBytes];
-        HAPRawBufferCopyBytes(attributesBuffer, &attributesTLV.value.bytes[0], attributesTLV.value.numBytes);
+        HAPRawBufferCopyBytes(attributesBuffer, &attributesTLV.value.bytes, attributesTLV.value.numBytes);
         HAPTLVReaderRef attributesReader;
         HAPTLVReaderCreateWithOptions(
                 &attributesReader,
@@ -1177,8 +1043,6 @@ HAPError HandleStreamingStatusRead(
 
     HAPLogInfo(&kHAPLog_Default, "%s", __func__);
 
-    printf("accessoryConfiguration.state.streaming address in HandleStreamingStatusRead: %p\n", &accessoryConfiguration.state.streaming);
-
     HAPLogInfo(&kHAPLog_Default, "streaming state: %d", accessoryConfiguration.state.streaming);
     HAPError err;
 
@@ -1201,8 +1065,7 @@ HAPError HandleSupportedAudioRead(
 
     HAPLogInfo(&kHAPLog_Default, "%s", __func__);
 
-    handleAudioRead(responseWriter);
-    return kHAPError_None;
+    return HAPTLVWriterEncode(responseWriter, &supportedAudioConfigFormat, &supportedAudioConfigValue);
 }
 
 HAP_RESULT_USE_CHECK
@@ -1216,113 +1079,6 @@ HAPError HandleSupportedVideoRead(
     HAPLogInfo(&kHAPLog_Default, "%s", __func__);
     HAPError err;
 
-    // const HAPTLV videoCodecTypeTLV = { .type = 1, .value = { .bytes = (uint8_t[]) { 0 }, .numBytes = 1 } };
-
-    // const HAPTLV videoCodecParamsTLV = {
-    //     .type = 2,
-    //     .value = { .bytes = (const HAPTLV* const[]) { &(const HAPTLV) { .type = 1,
-    //                                                                     .value = { .bytes = (uint8_t[]) { 1 },
-    //                                                                                .numBytes = 1 } }, // profileId
-    //                                                   &(const HAPTLV) { .type = 2,
-    //                                                                     .value = { .bytes = (uint8_t[]) { 2 },
-    //                                                                                .numBytes = 1 } }, // level
-    //                                                   &(const HAPTLV) { .type = 3,
-    //                                                                     .value = { .bytes = (uint8_t[]) { 0 },
-    //                                                                                .numBytes = 1 } }, // packetMode
-    //                                                   NULL },
-    //                .numBytes = 3 + (3 * 2) }
-    // };
-
-    // const HAPTLV videoCVOEnabledTLV = { .type = 4, .value = { .bytes = (uint8_t[]) { 0 }, .numBytes = 1 } };
-
-    // const HAPTLV videoAttributes1080TLV = {
-    //     .type = 3,
-    //     .value = { .bytes = (const HAPTLV* const[]) { &(const HAPTLV) { .type = 1,
-    //                                                                     .value = { .bytes = (uint16_t[]) { 1920 },
-    //                                                                                .numBytes = 2 } }, // Width
-    //                                                   &(const HAPTLV) { .type = 2,
-    //                                                                     .value = { .bytes = (uint16_t[]) { 1080 },
-    //                                                                                .numBytes = 2 } }, // Height
-    //                                                   &(const HAPTLV) { .type = 3,
-    //                                                                     .value = { .bytes = (uint8_t[]) { 30 },
-    //                                                                                .numBytes = 1 } }, // Framerate
-    //                                                   NULL },
-    //                .numBytes = 5 + (3 * 2) }
-    // };
-
-    // const HAPTLV videoAttributes720TLV = {
-    //     .type = 3,
-    //     .value = { .bytes = (const HAPTLV* const[]) { &(const HAPTLV) { .type = 1,
-    //                                                                     .value = { .bytes = (uint16_t[]) { 1280 },
-    //                                                                                .numBytes = 2 } }, // Width
-    //                                                   &(const HAPTLV) { .type = 2,
-    //                                                                     .value = { .bytes = (uint16_t[]) { 720 },
-    //                                                                                .numBytes = 2 } }, // Height
-    //                                                   &(const HAPTLV) { .type = 3,
-    //                                                                     .value = { .bytes = (uint8_t[]) { 30 },
-    //                                                                                .numBytes = 1 } }, // Framerate
-    //                                                   NULL },
-    //                .numBytes = 5 + (3 * 2) }
-    // };
-
-    // const HAPTLV videoAttributes320TLV = {
-    //     .type = 3,
-    //     .value = { .bytes = (const HAPTLV* const[]) { &(const HAPTLV) { .type = 1,
-    //                                                                     .value = { .bytes = (uint16_t[]) { 320 },
-    //                                                                                .numBytes = 2 } }, // Width
-    //                                                   &(const HAPTLV) { .type = 2,
-    //                                                                     .value = { .bytes = (uint16_t[]) { 240 },
-    //                                                                                .numBytes = 2 } }, // Height
-    //                                                   &(const HAPTLV) { .type = 3,
-    //                                                                     .value = { .bytes = (uint8_t[]) { 15 },
-    //                                                                                .numBytes = 1 } }, // Framerate
-    //                                                   NULL },
-    //                .numBytes = 5 + (3 * 2) }
-    // };
-
-    // const HAPTLV videoAttributes640TLV = {
-    //     .type = 3,
-    //     .value = { .bytes = (const HAPTLV* const[]) { &(const HAPTLV) { .type = 1,
-    //                                                                     .value = { .bytes = (uint16_t[]) { 640 },
-    //                                                                                .numBytes = 2 } }, // Width
-    //                                                   &(const HAPTLV) { .type = 2,
-    //                                                                     .value = { .bytes = (uint16_t[]) { 480 },
-    //                                                                                .numBytes = 2 } }, // Height
-    //                                                   &(const HAPTLV) { .type = 3,
-    //                                                                     .value = { .bytes = (uint8_t[]) { 30 },
-    //                                                                                .numBytes = 1 } }, // Framerate
-    //                                                   NULL },
-    //                .numBytes = 5 + (3 * 2) }
-    // };
-
-    // const HAPTLV videoCodecConfigTLV = {
-    //     .type = 1,
-    //     .value = { .bytes = (const HAPTLV* const[]) { &videoCodecTypeTLV,
-    //                                                   &videoCodecParamsTLV,
-    //                                                   &videoAttributes1080TLV,
-    //                                                   &(const HAPTLV) { .type = kHAPPairingTLVType_Separator, .value
-    //                                                   = { .bytes = NULL, .numBytes = 0 } }, &videoAttributes720TLV,
-    //                                                   &(const HAPTLV) { .type = kHAPPairingTLVType_Separator, .value
-    //                                                   = { .bytes = NULL, .numBytes = 0 } }, &videoAttributes320TLV,
-    //                                                   &(const HAPTLV) { .type = kHAPPairingTLVType_Separator, .value
-    //                                                   = { .bytes = NULL, .numBytes = 0 } }, &videoAttributes640TLV,
-    //                                                   &videoCVOEnabledTLV,
-    //                                                   NULL },
-    //                .numBytes = videoCodecTypeTLV.value.numBytes + videoCodecParamsTLV.value.numBytes +
-    //                            videoAttributes1080TLV.value.numBytes + videoAttributes720TLV.value.numBytes +
-    //                            +videoAttributes320TLV.value.numBytes + videoAttributes640TLV.value.numBytes +
-    //                            videoCVOEnabledTLV.value.numBytes + (5 * 2) +6 }
-    // };
-    // err = HAPTLVWriterAppend(responseWriter, &videoCodecConfigTLV);
-    // HAPAssert(!err);
-    // return kHAPError_None;
-    // TODO - What am I even doing in the rest of this function?
-    // err = HAPTLVWriterEncode(responseWriter, &supportedVideoConfigFormat, &supportedVideoConfigValue);
-    // HAPAssert(!err);
-    // return kHAPError_None;
-
-    // err = handleVideoRead(responseWriter);
-    // return err;
     const HAPTLV videoConfig = { .type = 0x01,
                                  .value = { .bytes =
                                                     (uint8_t[]) {
@@ -1355,19 +1111,10 @@ HAPError HandleSupportedVideoRead(
                                                             0x04,
                                                             0x01,
                                                             0x00, // CVO Enabled false
-                                                            0x03,
-                                                            0x0B, // Attributes
-                                                            0x01,
-                                                            0x02,
-                                                            0x80,
-                                                            0x07, // Width 1920 - bytes flipped
-                                                            0x02,
-                                                            0x02,
-                                                            0x38,
-                                                            0x04, // Height 1080 - bytes flipped
-                                                            0x03,
-                                                            0x01,
-                                                            0x18, // Framerate
+                                                            0x03, 0x0B,             // Attributes
+                                                            0x01, 0x02, 0x80, 0x07, // Width 1920 - bytes flipped
+                                                            0x02, 0x02, 0x38, 0x04, // Height 1080 - bytes flipped
+                                                            0x03, 0x01, 0x18,       // Framerate
                                                             0xFF, 0x00,              // Seperator
                                                             0x03, 0x0B,             // Attributes
                                                             0x01, 0x02, 0x00, 0x05, // Width 1280 - bytes flipped
@@ -1383,36 +1130,17 @@ HAPError HandleSupportedVideoRead(
                                                             0x01, 0x02, 0x20, 0x03, // Width 800 - bytes flipped
                                                             0x02, 0x02, 0xc2, 0x01, // Height 450 - bytes flipped
                                                             0x03, 0x01, 0x18,       // Framerate
-                                                            0xFF,
-                                                            0x00, // Seperator
-                                                            0x03,
-                                                            0x0B, // Attributes
-                                                            0x01,
-                                                            0x02,
-                                                            0x80,
-                                                            0x02, // Width 640 - bytes flipped
-                                                            0x02,
-                                                            0x02,
-                                                            0x68,
-                                                            0x01, // Height 360 - byte flipped
-                                                            0x03,
-                                                            0x01,
-                                                            0x18, // Framerate
-                                                            0xFF,
-                                                            0x00, // Seperator
-                                                            0x03,
-                                                            0x0B, // Attributes
-                                                            0x01,
-                                                            0x02,
-                                                            0x40,
-                                                            0x01, // Width 320 - bytes flipped
-                                                            0x02,
-                                                            0x02,
-                                                            0xB4,
-                                                            0x00, // Height 180 - bytes flipped
-                                                            0x03,
-                                                            0x01,
-                                                            0x0F // Framerate
+                                                            0xFF, 0x00, // Seperator
+                                                            0x03, 0x0B, // Attributes
+                                                            0x01, 0x02, 0x80, 0x02, // Width 640 - bytes flipped
+                                                            0x02, 0x02, 0x68, 0x01, // Height 360 - byte flipped
+                                                            0x03, 0x01, 0x18, // Framerate
+                                                            0xFF, 0x00, // Seperator
+                                                            0x03, 0x0B, // Attributes
+                                                            //for apple watch
+                                                            0x01, 0x02, 0x40, 0x01, // Width 320 - bytes flipped
+                                                            0x02, 0x02, 0xF0, 0x00, // Height 240 - bytes flipped
+                                                            0x03, 0x01, 0x0F // Framerate
                                                     },
                                             .numBytes = 0x48 + 15 * 3 } }; // 12 * 3 + 6 * 4 + 6 * 2 + 15 *3
     // err = VerifyCodecConfigTLV((void*) &videoConfig, 72);
@@ -1467,15 +1195,23 @@ HAPError HandleSelectedRTPConfigWrite(
     AccessoryContext* myContext = context;
     selectedRTPStruct selectedRtp;
     HAPError err;
+    selectedRtp.videoParameters = myContext->session.videoParameters;
+    selectedRtp.audioParameters = myContext->session.audioParameters;
+    
     err = HAPTLVReaderDecode(requestReader, &selectedRTPFormatWrite, &selectedRtp);
 
-    if (HAPRawBufferAreEqual(myContext->session.sessionId, selectedRtp.control.sessionId, UUIDLENGTH)) {
+    if (HAPRawBufferAreEqual(&(myContext->session.sessionId), &(selectedRtp.control.sessionId), UUIDLENGTH)) {
         myContext->session.videoParameters = selectedRtp.videoParameters;
         myContext->session.audioParameters = selectedRtp.audioParameters;
         if (selectedRtp.control.command == kHAPCharacteristicValue_RTPCommand_Start) {
-            HAPLogDebug(&kHAPLog_Default, "Starting stream");
-            accessoryConfiguration.state.streaming = kHAPCharacteristicValue_StreamingStatus_InUse;
-            posStartStream(context);
+            if(accessoryConfiguration.state.rtp.active){
+                // Added with support for HKSV
+                HAPLogDebug(&kHAPLog_Default, "Starting stream");
+                accessoryConfiguration.state.streaming = kHAPCharacteristicValue_StreamingStatus_InUse;
+                posStartStream(context);
+            } else {
+                HAPLogError(&kHAPLog_Default, "Attempted to start a stream while streaming is not enabled");
+            }
         } else if (selectedRtp.control.command == kHAPCharacteristicValue_RTPCommand_End) {
             HAPLogDebug(&kHAPLog_Default, "Ending Stream");
             accessoryConfiguration.state.streaming = kHAPCharacteristicValue_StreamingStatus_Available;
@@ -1493,63 +1229,19 @@ HAPError HandleSelectedRTPConfigWrite(
             HAPLogDebug(&kHAPLog_Default, "Unknown stream configuration control command: %d", selectedRtp.control.command);
         }
     }
+    else {
+        HAPLogError(&kHAPLog_Default, "Session ID doesn't match the session ID in setup endpoints ");
+    }
 
-        
-    // HAPError err;
-
-    // const HAPTLVReader* myReader = (const HAPTLVReader*)requestReader;
-    // HAPLogDebug(&kHAPLog_Default, "numBytes: %lu\n", myReader->numBytes);
-    // for (size_t i = 0; i < myReader->numBytes; i++)
-    // {
-    //     HAPLogDebug(&kHAPLog_Default, "0x%02X", ((uint8_t*)myReader->bytes)[i]);
-    // }
-
-    /*    HAPTLV sessionControlTLV, selectedVideoTLV, selectedAudioTLV;
-        sessionControlTLV.type = 1;
-        selectedVideoTLV.type = 2;
-        selectedAudioTLV.type = 3;
-
-         HAPTLV* tlvs[] = {&sessionControlTLV, &selectedVideoTLV, &selectedAudioTLV, NULL};
-
-        // Simply validate input.
-        err = HAPTLVReaderGetAll(requestReader, tlvs);
-        if (err) {
-            HAPAssert(err == kHAPError_InvalidData);
-            return err;
-        }
-
-        for (HAPTLV* const* tlvItem = tlvs; *tlvItem; tlvItem++) {
-            HAPLogDebug(&kHAPLog_Default, "tlvType: %d, tlvSize: %lu\n", (*tlvItem)->type, (*tlvItem)->value.numBytes );
-        } */
-    // Get TLV item.
-    // HAPTLV tlv;
-    // bool valid;
-    // err = HAPTLVReaderGetNext(&reader, &valid, &tlv);
-    // HAPAssert(!err);
-    // HAPAssert(valid);
-
-    // Compare TLV item.
-    // HAPAssert(tlv.type == (*tlvItem)->type);
-    // HAPAssert(tlv.value.numBytes == (*tlvItem)->value.numBytes);
-    // if (!(*tlvItem)->value.bytes) {
-    //     HAPAssert(!tlv.value.bytes);
-    // } else {
-    //     HAPAssert(tlv.value.bytes);
-    //     HAPAssert(HAPRawBufferAreEqual(
-    //             HAPNonnullVoid(tlv.value.bytes), HAPNonnullVoid((*tlvItem)->value.bytes), tlv.value.numBytes));
-
-    //     // Check for NULL-terminator after TLV.
-    //     HAPAssert(!((const uint8_t*) tlv.value.bytes)[tlv.value.numBytes]);
-    // }
 
     return kHAPError_None;
 }
 
 
 int OpenSocket(
-    const char *localAddr, // out, needs to be INET6_ADDRSTRLEN long
+    char *localAddr, // out, needs to be INET6_ADDRSTRLEN long
     uint16_t *localPort, // out 
-    const char *remoteAddr, // in
+    char *remoteAddr, // in
     uint16_t remotePort){ // in
 
     // Open the socket on read endpoint to get the outbound IP address and port
@@ -1569,7 +1261,7 @@ int OpenSocket(
 
     char portStr[32];
     snprintf(portStr, 32, "%d", remotePort);
-    s = getaddrinfo(remoteAddr, &portStr, &hints, &result);
+    s = getaddrinfo(remoteAddr, (char *)&portStr, &hints, &result);
     if (s != 0) {
         HAPLogError(&kHAPLog_Default, "getaddrinfo failed: %s\n", gai_strerror(s));
         return -1;
@@ -1645,9 +1337,9 @@ HAPError HandleSetupEndpointsRead(
     }
 
     int sfd = OpenSocket(
-        &myContext->session.accessoryAddress.ipAddress,
+        (char *)&myContext->session.accessoryAddress.ipAddress,
         &myContext->session.accessoryAddress.videoPort,
-        &myContext->session.controllerAddress.ipAddress,
+        (char *)&myContext->session.controllerAddress.ipAddress,
         myContext->session.controllerAddress.videoPort);
 
     if(sfd > 0){
@@ -1663,9 +1355,9 @@ HAPError HandleSetupEndpointsRead(
            myContext->session.accessoryAddress.videoPort);
 
     int sfd_audio = OpenSocket(
-        &myContext->session.accessoryAddress.ipAddress,
+        (char *) &myContext->session.accessoryAddress.ipAddress,
         &myContext->session.accessoryAddress.audioPort,
-        &myContext->session.controllerAddress.ipAddress,
+        (char *) &myContext->session.controllerAddress.ipAddress,
         myContext->session.controllerAddress.audioPort);
 
     if(sfd_audio > 0){
@@ -1693,6 +1385,7 @@ HAPError HandleSetupEndpointsRead(
 
     myContext->session.accessoryAddress.ipAddrVersion = myContext->session.controllerAddress.ipAddrVersion;
 
+    /*
     printf("myContext->session.sessionId: %s\n", myContext->session.sessionId);
     printf("myContext->session.setupWriteStatus: %s\n", myContext->session.setupWriteStatus);
     printf("myContext->session.accessoryAddress.audioPort: %d\n", myContext->session.accessoryAddress.audioPort);
@@ -1707,7 +1400,7 @@ HAPError HandleSetupEndpointsRead(
     printf("myContext->session.audioParams.srtpMasterSalt: %16x\n", myContext->session.audioParams.srtpMasterSalt);
     printf("myContext->session.ssrcVideo: %d", myContext->session.ssrcVideo);
     printf("myContext->session.ssrcAudio: %d", myContext->session.ssrcAudio);
-
+    */
 
     err = HAPTLVWriterEncode(responseWriter, &streamingSessionFormatRead, &(myContext->session));
 
@@ -1782,403 +1475,8 @@ HAPError HandleMotionDetectedRead(
         bool* value,
         void* _Nullable context HAP_UNUSED) {
     *value = accessoryConfiguration.state.motion.detected;
-    printf("%s: %s\n", __func__, *value ? "true" : "false");
+    //printf("%s: %s\n", __func__, *value ? "true" : "false");
     HAPLogInfo(&kHAPLog_Default, "%s: %s", __func__, *value ? "true" : "false");
     return kHAPError_None;
 }
 
-/**
- * @file streaming.c
- * @author your name (you@domain.com)
- * @brief
- * @version 0.1
- * @date 2021-01-20
- *
- * @copyright Copyright (c) 2021
- *
- */
-
-// #include "streaming.h"
-// #include "HAPTLV+Internal.h"
-// #include <string.h>
-
-// static bool isValid(void* unsused HAP_UNUSED) {
-//     return true;
-// }
-
-// supportedAudioConfigStruct supportedAudioConfigValue =
-// {
-//     .audioCodecConfig =
-//     {
-//         .audioCodecType = 2,     // AAC-ELD
-//         .audioCodecParams =
-//         {
-//             .audioChannels = 1,  // 1 channel
-//             .bitRate = 0,        // Variable
-//             .sampleRate = 1      // 16kHz 8 not supported on MBP
-//         }
-//     },
-//     .comfortNoiseSupport = false
-// };
-
-// HAP_STRUCT_TLV_SUPPORT(void, SupportedAudioConfigFormat)
-// HAP_STRUCT_TLV_SUPPORT(void, AudioCodecConfigFormat)
-// HAP_STRUCT_TLV_SUPPORT(void, AudioCodecParamsFormat)
-
-// const HAPUInt8TLVFormat audioCodecParamsAudioChannelsFormat = { .type = kHAPTLVFormatType_UInt8,
-//                                                                 .constraints = { .minimumValue = 1, .maximumValue = 1
-//                                                                 }, .callbacks = { .getDescription = NULL } };
-// const HAPStructTLVMember audioCodecParamsAudioChannelsMember = {
-//     .valueOffset = HAP_OFFSETOF(audioCodecParamsStruct, audioChannels),
-//     .isSetOffset = 0,
-//     .tlvType = 1,
-//     .debugDescription = "Audio Codec Config Params Audio Channels",
-//     .format = &audioCodecParamsAudioChannelsFormat,
-//     .isOptional = false,
-//     .isFlat = false
-// };
-
-// const HAPUInt8TLVFormat audioCodecParamsBitRateFormat = { .type = kHAPTLVFormatType_UInt8,
-//                                                           .constraints = { .minimumValue = 0, .maximumValue = 2 },
-//                                                           .callbacks = { .getDescription = NULL } };
-// const HAPStructTLVMember audioCodecParamsBitRateMember = { .valueOffset = HAP_OFFSETOF(audioCodecParamsStruct,
-// bitRate),
-//                                                            .isSetOffset = 0,
-//                                                            .tlvType = 2,
-//                                                            .debugDescription = "Audio Codec Config Params Bit-Rate",
-//                                                            .format = &audioCodecParamsBitRateFormat,
-//                                                            .isOptional = false,
-//                                                            .isFlat = false };
-
-// // const HAPUInt8TLVFormat audioCodecParamsSampleRateFormat = { .type = kHAPTLVFormatType_UInt8,
-// //                                                              .constraints = { .minimumValue = 0, .maximumValue = 2
-// },
-// //                                                              .callbacks = { .getDescription = NULL } };
-// const HAPStructTLVMember audioCodecParamsSampleRateMember = { .valueOffset =
-//                                                                       HAP_OFFSETOF(audioCodecParamsStruct,
-//                                                                       sampleRate),
-//                                                               .isSetOffset = 0,
-//                                                               .tlvType = 3,
-//                                                               .debugDescription =
-//                                                                       "Audio Codec Config Params Sample Rate",
-//                                                               .format = &audioCodecParamsSampleRateFormat,
-//                                                               .isOptional = false,
-//                                                               .isFlat = false };
-
-/* ---------------------------------------------------------------------------------------------*/
-
-// const HAPUInt16TLVFormat audioCodecTypeFormat = { .type = kHAPTLVFormatType_UInt16,
-//                                                   .constraints = { .minimumValue = 0, .maximumValue = 6 },
-//                                                   .callbacks = { .getDescription = NULL } };
-// const HAPStructTLVMember audioCodecTypeMember = { .valueOffset = HAP_OFFSETOF(audioCodecConfigStruct,
-// audioCodecType),
-//                                                   .isSetOffset = 0,
-//                                                   .tlvType = 1,
-//                                                   .debugDescription = "Audio Codec Type",
-//                                                   .format = &audioCodecTypeFormat,
-//                                                   .isOptional = false,
-//                                                   .isFlat = false };
-
-/* ---------------------------------------------------------------------------------------------*/
-
-// const AudioCodecConfigFormat audioCodecParamsFormat = {
-//     .type = kHAPTLVFormatType_Struct,
-//     .members = (const HAPStructTLVMember* const[]) { &audioCodecParamsAudioChannelsMember,
-//                                                      &audioCodecParamsBitRateMember,
-//                                                      &audioCodecParamsSampleRateMember,
-//                                                      &audioCodecParamsRTPTimeMember,
-//                                                      NULL },
-//     .callbacks = { .isValid = isValid }
-// };
-// const HAPStructTLVMember audioCodecParamsMember = { .valueOffset =
-//                                                             HAP_OFFSETOF(audioCodecConfigStruct, audioCodecParams),
-//                                                     .isSetOffset = 0,
-//                                                     .tlvType = 2,
-//                                                     .debugDescription = "Audio Codec Parameters",
-//                                                     .format = &audioCodecParamsFormat,
-//                                                     .isOptional = false,
-//                                                     .isFlat = false };
-
-/* ---------------------------------------------------------------------------------------------*/
-
-// // const AudioCodecConfigFormat audioCodecConfigFormat = {
-// //     .type = kHAPTLVFormatType_Struct,
-// //     .members = (const HAPStructTLVMember* const[]) { &audioCodecTypeMember, &audioCodecParamsMember, NULL },
-// //     .callbacks = { .isValid = isValid }
-// // };
-// const HAPStructTLVMember audioCodecConfigMember = { .valueOffset =
-//                                                             HAP_OFFSETOF(supportedAudioConfigStruct,
-//                                                             audioCodecConfig),
-//                                                     .isSetOffset = 0,
-//                                                     .tlvType = 1,
-//                                                     .debugDescription = "Audio Codec Config",
-//                                                     .format = &audioCodecConfigFormat,
-//                                                     .isOptional = false,
-//                                                     .isFlat = false };
-
-// const HAPUInt8TLVFormat comfortNoiseFormat = { .type = kHAPTLVFormatType_UInt8,
-//                                                .constraints = { .minimumValue = 0, .maximumValue = 255 },
-//                                                .callbacks = { .getDescription = NULL } };
-// const HAPStructTLVMember comfortNoiseMember = { .valueOffset =
-//                                                         HAP_OFFSETOF(supportedAudioConfigStruct,
-//                                                         comfortNoiseSupport),
-//                                                 .isSetOffset = 0,
-//                                                 .tlvType = 2,
-//                                                 .debugDescription = "Comfort Noise Support",
-//                                                 .format = &comfortNoiseFormat,
-//                                                 .isOptional = false,
-//                                                 .isFlat = false };
-
-// const SupportedAudioConfigFormat supportedAudioConfigFormat = {
-//     .type = kHAPTLVFormatType_Struct,
-//     .members = (const HAPStructTLVMember* const[]) { &audioCodecConfigMember, &comfortNoiseMember, NULL },
-//     .callbacks = { .isValid = isValid }
-// };
-
-// supportedVideoConfigStruct supportedVideoConfigValue = {
-//     .videoCodecConfig = { .videoCodecType = 0,
-//                           .videoCodecParams = { .profileID = 1,
-//                                                 .level = 2,
-//                                                 .packetizationMode = 0,
-//                                                 .CVOEnabled = 0 }, // TODO - Make enums for profileID, and level
-//                           .videoAttributes = { .imageWidth = 1920, .imageHeight = 1080, .frameRate = 30 } }
-// };
-
-// HAP_STRUCT_TLV_SUPPORT(void, SupportedVideoConfigFormat)
-// HAP_STRUCT_TLV_SUPPORT(void, VideoCodecConfigFormat)
-// HAP_STRUCT_TLV_SUPPORT(void, VideoCodecParamsFormat)
-// HAP_STRUCT_TLV_SUPPORT(void, VideoAttributesFormat)
-
-// const HAPUInt8TLVFormat videoCodecParamsProfileIDFormat = { .type = kHAPTLVFormatType_UInt8,
-//                                                             .constraints = { .minimumValue = 0, .maximumValue = 2 },
-//                                                             .callbacks = { .getDescription = NULL } };
-// const HAPStructTLVMember videoCodecParamsProfileIDMember = { .valueOffset =
-//                                                                      HAP_OFFSETOF(videoCodecParamsStruct, profileID),
-//                                                              .isSetOffset = 0,
-//                                                              .tlvType = 1,
-//                                                              .debugDescription = "Video Codec Config Params Profile
-//                                                              ID", .format = &videoCodecParamsProfileIDFormat,
-//                                                              .isOptional = false,
-//                                                              .isFlat = false };
-
-// const HAPUInt8TLVFormat videoCodecParamsLevelFormat = { .type = kHAPTLVFormatType_UInt8,
-//                                                         .constraints = { .minimumValue = 0, .maximumValue = 2 },
-//                                                         .callbacks = { .getDescription = NULL } };
-// const HAPStructTLVMember videoCodecParamsLevelMember = { .valueOffset = HAP_OFFSETOF(videoCodecParamsStruct, level),
-//                                                          .isSetOffset = 0,
-//                                                          .tlvType = 2,
-//                                                          .debugDescription = "Video Codec Config Params Level",
-//                                                          .format = &videoCodecParamsLevelFormat,
-//                                                          .isOptional = false,
-//                                                          .isFlat = false };
-
-// const HAPUInt8TLVFormat videoCodecParamsPacketizationModeFormat = { .type = kHAPTLVFormatType_UInt8,
-//                                                                     .constraints = { .minimumValue = 0,
-//                                                                                      .maximumValue = 2 },
-//                                                                     .callbacks = { .getDescription = NULL } };
-// const HAPStructTLVMember videoCodecParamsPacketizationModeMember = {
-//     .valueOffset = HAP_OFFSETOF(videoCodecParamsStruct, packetizationMode),
-//     .isSetOffset = 0,
-//     .tlvType = 3,
-//     .debugDescription = "Video Codec Config Packetization Mode",
-//     .format = &videoCodecParamsPacketizationModeFormat,
-//     .isOptional = false,
-//     .isFlat = false
-// };
-
-// const HAPUInt8TLVFormat videoCodecParamsCVOEnabledFormat = { .type = kHAPTLVFormatType_UInt8,
-//                                                              .constraints = { .minimumValue = 0, .maximumValue = 2 },
-//                                                              .callbacks = { .getDescription = NULL } };
-// const HAPStructTLVMember videoCodecParamsCVOEnabledMember = { .valueOffset =
-//                                                                       HAP_OFFSETOF(videoCodecParamsStruct,
-//                                                                       CVOEnabled),
-//                                                               .isSetOffset = 0,
-//                                                               .tlvType = 4,
-//                                                               .debugDescription = "CVO Enabled",
-//                                                               .format = &videoCodecParamsCVOEnabledFormat,
-//                                                               .isOptional = true,
-//                                                               .isFlat = false };
-
-/* ---------------------------------------------------------------------------------------------*/
-
-// const HAPUInt8TLVFormat videoCodecTypeFormat = { .type = kHAPTLVFormatType_UInt8,
-//                                                  .constraints = { .minimumValue = 0, .maximumValue = 1 },
-//                                                  .callbacks = { .getDescription = NULL } };
-// const HAPStructTLVMember videoCodecTypeMember = { .valueOffset = HAP_OFFSETOF(videoCodecConfigStruct,
-// videoCodecType),
-//                                                   .isSetOffset = 0,
-//                                                   .tlvType = 1,
-//                                                   .debugDescription = "Video Codec Type",
-//                                                   .format = &videoCodecTypeFormat,
-//                                                   .isOptional = false,
-//                                                   .isFlat = false };
-
-/* ---------------------------------------------------------------------------------------------*/
-
-// // const VideoCodecConfigFormat videoCodecParamsFormat = {
-// //     .type = kHAPTLVFormatType_Struct,
-// //     .members = (const HAPStructTLVMember* const[]) { &videoCodecParamsProfileIDMember,
-// //                                                      &videoCodecParamsLevelMember,
-// //                                                      &videoCodecParamsPacketizationModeMember,
-// //                                                      //  &videoCodecParamsCVOEnabledMember,
-// //                                                      NULL },
-// //     .callbacks = { .isValid = isValid }
-// // };
-// const HAPStructTLVMember videoCodecParamsMember = { .valueOffset =
-//                                                             HAP_OFFSETOF(videoCodecConfigStruct, videoCodecParams),
-//                                                     .isSetOffset = 0,
-//                                                     .tlvType = 2,
-//                                                     .debugDescription = "Video Codec Parameters",
-//                                                     .format = &videoCodecParamsFormat,
-//                                                     .isOptional = false,
-//                                                     .isFlat = false };
-
-/* ---------------------------------------------------------------------------------------------*/
-
-// const HAPUInt16TLVFormat videoAttributesImageWidthFormat = { .type = kHAPTLVFormatType_UInt16,
-//                                                              .constraints = { .minimumValue = 0, .maximumValue = 4096
-//                                                              }, .callbacks = { .getDescription = NULL } };
-// const HAPStructTLVMember videoAttributesImageWidthMember = { .valueOffset =
-//                                                                      HAP_OFFSETOF(videoAttributesStruct, imageWidth),
-//                                                              .isSetOffset = 0,
-//                                                              .tlvType = 1,
-//                                                              .debugDescription = "Video Attributes Image Width",
-//                                                              .format = &videoAttributesImageWidthFormat,
-//                                                              .isOptional = false,
-//                                                              .isFlat = false };
-
-// const HAPUInt16TLVFormat videoAttributesImageHeightFormat = { .type = kHAPTLVFormatType_UInt16,
-//                                                               .constraints = { .minimumValue = 0,
-//                                                                                .maximumValue = 4096 },
-//                                                               .callbacks = { .getDescription = NULL } };
-// const HAPStructTLVMember videoAttributesImageHeightMember = { .valueOffset =
-//                                                                       HAP_OFFSETOF(videoAttributesStruct,
-//                                                                       imageHeight),
-//                                                               .isSetOffset = 0,
-//                                                               .tlvType = 2,
-//                                                               .debugDescription = "Video Attributes Image Height",
-//                                                               .format = &videoAttributesImageHeightFormat,
-//                                                               .isOptional = false,
-//                                                               .isFlat = false };
-
-// const HAPUInt8TLVFormat videoAttributesFrameRateFormat = { .type = kHAPTLVFormatType_UInt8,
-//                                                            .constraints = { .minimumValue = 0, .maximumValue = 255 },
-//                                                            .callbacks = { .getDescription = NULL } };
-// const HAPStructTLVMember videoAttributesFrameRateMember = { .valueOffset =
-//                                                                     HAP_OFFSETOF(videoAttributesStruct, frameRate),
-//                                                             .isSetOffset = 0,
-//                                                             .tlvType = 3,
-//                                                             .debugDescription = "Video Attributes Frame Rate",
-//                                                             .format = &videoAttributesFrameRateFormat,
-//                                                             .isOptional = false,
-//                                                             .isFlat = false };
-
-// const VideoAttributesFormat videoAttributesFormat = {
-//     .type = kHAPTLVFormatType_Struct,
-//     .members = (const HAPStructTLVMember* const[]) { &videoAttributesImageWidthMember,
-//                                                      &videoAttributesImageHeightMember,
-//                                                      &videoAttributesFrameRateMember,
-//                                                      NULL },
-//     .callbacks = { .isValid = isValid }
-// };
-// const HAPStructTLVMember videoAttributesMember = { .valueOffset = HAP_OFFSETOF(videoCodecConfigStruct,
-// videoAttributes),
-//                                                    .isSetOffset = 0,
-//                                                    .tlvType = 3,
-//                                                    .debugDescription = "Video Attributes",
-//                                                    .format = &videoAttributesFormat,
-//                                                    .isOptional = false,
-//                                                    .isFlat = false };
-
-/* ---------------------------------------------------------------------------------------------*/
-
-// const VideoCodecConfigFormat videoCodecConfigFormat = {
-//     .type = kHAPTLVFormatType_Struct,
-//     .members = (const HAPStructTLVMember* const[]) { &videoCodecTypeMember,
-//                                                      &videoCodecParamsMember,
-//                                                      &videoAttributesMember,
-//                                                      NULL },
-//     .callbacks = { .isValid = isValid }
-// };
-
-// const HAPStructTLVMember videoCodecConfigMember = { .valueOffset =
-//                                                             HAP_OFFSETOF(supportedVideoConfigStruct,
-//                                                             videoCodecConfig),
-//                                                     .isSetOffset = 0,
-//                                                     .tlvType = 1,
-//                                                     .debugDescription = "Video Codec Config",
-//                                                     .format = &videoCodecConfigFormat,
-//                                                     .isOptional = false,
-//                                                     .isFlat = false };
-
-/* ---------------------------------------------------------------------------------------------*/
-
-// const SupportedVideoConfigFormat supportedVideoConfigFormat = {
-//     .type = kHAPTLVFormatType_Struct,
-//     .members = (const HAPStructTLVMember* const[]) { &videoCodecConfigMember, NULL },
-//     .callbacks = { .isValid = isValid }
-// };
-
-/* ---------------------------------------------------------------------------------------------*/
-
-/* const RTPParametersFormat rtpParametersFormat = {
-    .type = kHAPTLVFormatType_Struct,
-    .members = (const HAPStructTLVMember* const[]) { &payloadTypeMember,
-                                                     &selectedSsrcTypeMember,
-                                                     &maximumBitrateTypeMember,
-                                                     &minRTCPIntervalTypeMember,
-                                                     NULL },
-    .callbacks = { .isValid = isValid }
-}; */
-
-/* const HAPStructTLVMember videoRtpParametersMember = { .valueOffset = HAP_OFFSETOF(videoRtpParameters,
-   vRtpParameters), .isSetOffset = 0, .tlvType = 1, .debugDescription = "Video RTP Parameters Type", .format =
-   &rtpParametersFormat, .isOptional = false, .isFlat = true }; */
-
-/* const HAPStructTLVMember audioRtpParametersMember = { .valueOffset = HAP_OFFSETOF(audioRtpParameters, rtpParameters),
-                                                      .isSetOffset = 0,
-                                                      .tlvType = 1,
-                                                      .debugDescription = "Audio RTP Parameters Type",
-                                                      .format = &rtpParametersFormat,
-                                                      .isOptional = false,
-                                                      .isFlat = true }; */
-
-/* ---------------------------------------------------------------------------------------------*/
-
-// HAPError handleSessionRead(HAPTLVWriterRef* responseWriter, streamingSession* session) {
-//     HAPError err;
-//     err = HAPTLVWriterEncode(responseWriter, &streamingSessionFormatRead, session);
-//     return err;
-// };
-// TODO - Remove this function as it's unnecessary.
-// HAPError handleSessionWrite(HAPTLVReaderRef* responseReader, streamingSession* session) {
-//     HAPError err;
-//     err = HAPTLVReaderDecode(responseReader, &streamingSessionFormatWrite, session);
-//     return err;
-// };
-
-// HAPError handleSelectedWrite(HAPTLVReaderRef* responseReader, selectedRTPStruct* selectedRTP) {
-//     HAPError err;
-//     err = HAPTLVReaderDecode(responseReader, &selectedRTPFormatWrite, selectedRTP);
-//     return err;
-// };
-
-void checkFormats() {
-
-    const HAPTLVFormat* formats[] = {
-        &sessionControlTypeFormat, &selectedVideoParametersFormat, &selectedAudioParametersFormat, NULL
-    };
-    for (size_t i = 0; i < 3; i++) {
-        bool valid;
-        valid = HAPTLVFormatIsValid(formats[i]);
-        HAPLogDebug(&kHAPLog_Default, "%zu: %d", i, valid);
-    }
-}
-
-HAPError handleAudioRead(HAPTLVWriterRef* responseWriter) {
-    return HAPTLVWriterEncode(responseWriter, &supportedAudioConfigFormat, &supportedAudioConfigValue);
-}
-
-HAPError handleVideoRead(HAPTLVWriterRef* responseWriter) {
-    return HAPTLVWriterAppend(responseWriter, &videoConfig);
-}
